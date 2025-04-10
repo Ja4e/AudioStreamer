@@ -1,3 +1,26 @@
+"""
+MIT License
+Copyright (c) 2025 Saul Gman
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+"""
+This is a very sophiscated script, it somehow have higher chances to get a sucessful connection rather than having reported org.bluez.Error.Failed le-connection-abort-by-local issues by bluetoothctl
+I am using Intel AX210 with it, um i think this script should work other functional bluetooth adapter well just incase. Its now very comparable to apple's bluetooth approach to ASHA devices
+"""
 import os
 import pty
 import subprocess
@@ -20,9 +43,6 @@ PRIMARY_DEVICE = "RTL's Hearing Device"
 SECONDARY_DEVICE = "AudioStream Adapter"
 
 GATT_ATTRIBUTE= "00e4ca9e-ab14-41e4-8823-f9e70c7e91df" # Your device's GATT ATTRIBUTE may differ from mine try to use volume.sh provided in the repo and test
-
-# This script is very sophiscated, it have higher chances to get a sucessful connection rather than having reported org.bluez.Error.Failed le-connection-abort-by-local issues by bluetoothctl
-# I am using Intel AX210 with it, um i think this script should work other functional bluetooth adapter well just incase. Its now very comparable to apple's bluetooth approach to ASHA devices
 
 REPO_URL = "https://github.com/thewierdnut/asha_pipewire_sink.git"
 CLONE_DIR = os.path.expanduser("~/asha_pipewire_sink")
