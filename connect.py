@@ -19,8 +19,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 """
-This is a very sophisticated script that should improve the chances of a successful connection,
-by avoiding reported org.bluez.Error.Failed connection abort-by-local issues via bluetoothctl.
+This is a very sophisticated script that should improve the chances of a successful connection
+reduces the chances of getting reported org.bluez.Error.Failed connection abort-by-local issues.
 Tested with Intel AX210 – it should also work with other functional Bluetooth adapters.
 It is now comparable to Apple's Bluetooth approach to ASHA devices.
 """
