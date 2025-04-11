@@ -24,7 +24,6 @@ by avoiding reported org.bluez.Error.Failed connection abort-by-local issues via
 Tested with Intel AX210 – it should also work with other functional Bluetooth adapters.
 It is now comparable to Apple's Bluetooth approach to ASHA devices.
 """
-
 import os
 import pty
 import subprocess
@@ -38,27 +37,39 @@ import re
 import asyncio
 from colorama import init as colorama_init, Fore, Style
 
-# Initialize colorama
+# For LE Advertising via BlueZ DBus API
+import dbus
+import dbus.exceptions
+import dbus.service
+import dbus.mainloop.glib
+from gi.repository import GLib
+
+# Initialize colorama for colored terminal output
 colorama_init(autoreset=True)
 
-# Configuration
+# ------------------------------
+# CONFIGURATION
+# ------------------------------
 DEBUG = os.getenv('DEBUG', '0') == '1'
 
-# Update these as needed: the script tracks devices by name
+# Device names: adjust to your actual device names
 PRIMARY_DEVICE = "RTL's Hearing Device"
 SECONDARY_DEVICE = "AudioStream Adapter"
 
-GATT_ATTRIBUTE = "00e4ca9e-ab14-41e4-8823-f9e70c7e91df"  # Your device's GATT ATTRIBUTE may differ from mine.
-VOLUME_VALUE = "0xff" # Max can be adjusted btween the range from 0-255
+# GATT Attribute and value to be written (ensure these match your actual device)
+GATT_ATTRIBUTE = "00e4ca9e-ab14-41e4-8823-f9e70c7e91df"
+VOLUME_VALUE = "0xff"  # Maximum volume (0-255 range)
 
+# Repository information for the ASHA PipeWire Sink
 REPO_URL = "https://github.com/thewierdnut/asha_pipewire_sink.git"
 CLONE_DIR = os.path.expanduser("~/asha_pipewire_sink")
 BUILD_DIR = os.path.join(CLONE_DIR, "build")
 EXECUTABLE = os.path.join(BUILD_DIR, "asha_pipewire_sink")
 
-RETRY_DELAY = 0  # Delay in seconds between retries
+# Other configuration
+RETRY_DELAY = 0  # Seconds delay between retry attempts
 
-# Global variable for GATT flag
+# Global flag for GATT trigger prevention
 gatt_triggered = False
 
 # Global variables for scan management
@@ -66,479 +77,675 @@ scan_process = None
 scan_thread = None
 scan_running = threading.Event()
 
+# Global variables for advertisement management
+adv_loop = None
+adv_thread = None
+ad_obj = None
+
+# ------------------------------
+# UTILITY FUNCTIONS
+# ------------------------------
 def debug_print(message):
-	if DEBUG:
-		print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} {message}")
+    if DEBUG:
+        print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} {message}")
 
 def run_command(command, check=True, capture_output=False, input_text=None, cwd=None):
-	debug_print(f"Running command: {command} in cwd: {cwd}")
-	result = subprocess.run(
-		command,
-		shell=True,
-		check=check,
-		text=True,
-		capture_output=capture_output,
-		input=input_text,
-		cwd=cwd
-	)
-	return result.stdout.strip() if capture_output else None
+    debug_print(f"Running command: {command} [cwd={cwd}]")
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            check=check,
+            text=True,
+            capture_output=capture_output,
+            input=input_text,
+            cwd=cwd
+        )
+        return result.stdout.strip() if capture_output else None
+    except subprocess.CalledProcessError as e:
+        debug_print(f"Command error ({command}): {e}")
+        if capture_output:
+            return e.stdout.strip() if e.stdout else ''
+        raise
 
 def run_command_silent(command, check=True, capture_output=False, input_text=None, cwd=None):
-	result = subprocess.run(
-		command,
-		shell=True,
-		check=check,
-		text=True,
-		capture_output=capture_output,
-		input=input_text,
-		cwd=cwd
-	)
-	return result.stdout.strip() if capture_output else None
+    # Similar to run_command but with no extra logging
+    result = subprocess.run(
+        command,
+        shell=True,
+        check=check,
+        text=True,
+        capture_output=capture_output,
+        input=input_text,
+        cwd=cwd
+    )
+    return result.stdout.strip() if capture_output else None
 
+# ------------------------------
+# ADVERTISING CLASSES & FUNCTIONS
+# ------------------------------
+# This Advertisement class implements the org.bluez.LEAdvertisement1 interface.
+class Advertisement(dbus.service.Object):
+    PATH_BASE = '/org/bluez/example/advertisement'
+
+    def __init__(self, bus, index, ad_type, service_uuids, local_name, includes):
+        self.path = self.PATH_BASE + str(index)
+        self.bus = bus
+        self.ad_type = ad_type
+        self.service_uuids = service_uuids
+        self.local_name = local_name
+        self.includes = includes
+        # Optionally, you can add ManufacturerData, ServiceData, etc.
+        dbus.service.Object.__init__(self, bus, self.path)
+
+    def get_properties(self):
+        properties = {
+            'Type': self.ad_type,
+            'ServiceUUIDs': dbus.Array(self.service_uuids, signature='s'),
+            'Includes': dbus.Array(self.includes, signature='s'),
+            'LocalName': self.local_name
+        }
+        return { 'org.bluez.LEAdvertisement1': properties }
+
+    def get_path(self):
+        return dbus.ObjectPath(self.path)
+
+    @dbus.service.method('org.bluez.LEAdvertisement1', in_signature='', out_signature='')
+    def Release(self):
+        print('Advertisement released')
+
+def register_advertisement():
+    """
+    Registers the advertisement object with BlueZ using the LEAdvertisingManager1 interface.
+    """
+    global ad_obj
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    bus = dbus.SystemBus()
+    
+    # Get the advertising manager for hci0
+    adapter = bus.get_object('org.bluez', '/org/bluez/hci0')
+    ad_manager = dbus.Interface(adapter, 'org.bluez.LEAdvertisingManager1')
+    
+    # Create Advertisement instance:
+    # Use GATT_ATTRIBUTE as the advertised ServiceUUID,
+    # "ASHA Stream" as the local name, and include TX power.
+    ad_obj = Advertisement(
+        bus,
+        0,
+        ad_type="peripheral",
+        service_uuids=[GATT_ATTRIBUTE],
+        local_name="ASHA Stream",
+        includes=["tx-power"]
+    )
+    ad_path = ad_obj.get_path()
+    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Registering advertisement at {ad_path}...")
+    ad_manager.RegisterAdvertisement(ad_path, {},
+                                     reply_handler=lambda: print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Advertisement registered."),
+                                     error_handler=lambda e: print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Failed to register advertisement: {e}"))
+                                     
+def unregister_advertisement():
+    """
+    Unregister the advertisement.
+    """
+    global ad_obj
+    try:
+        if ad_obj is not None:
+            bus = dbus.SystemBus()
+            adapter = bus.get_object('org.bluez', '/org/bluez/hci0')
+            ad_manager = dbus.Interface(adapter, 'org.bluez.LEAdvertisingManager1')
+            ad_manager.UnregisterAdvertisement(ad_obj.get_path())
+            print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Advertisement unregistered.")
+    except Exception as e:
+        print(f"{Fore.YELLOW}[WARN]{Style.RESET_ALL} Error unregistering advertisement: {e}")
+    finally:
+        ad_obj = None
+
+def start_advertising():
+    """
+    Start the advertisement by registering it with BlueZ and running a GLib main loop in a separate thread.
+    """
+    global adv_loop, adv_thread
+    register_advertisement()
+    adv_loop = GLib.MainLoop()
+    def adv_loop_runner():
+        try:
+            adv_loop.run()
+        except Exception as e:
+            print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Advertisement loop error: {e}")
+    adv_thread = threading.Thread(target=adv_loop_runner, daemon=True)
+    adv_thread.start()
+    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Advertising thread started.")
+
+def stop_advertising():
+    """
+    Stop advertising and shutdown the GLib main loop.
+    """
+    global adv_loop, adv_thread
+    unregister_advertisement()
+    if adv_loop is not None:
+        adv_loop.quit()
+    if adv_thread is not None:
+        adv_thread.join(timeout=2)
+    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Advertising stopped.")
+
+# ------------------------------
+# SCAN MANAGEMENT FUNCTIONS
+# ------------------------------
 def start_scan():
-	global scan_process, scan_thread
-	if scan_running.is_set():
-		return
+    """
+    Start a bluetoothctl scan using a dedicated thread and process.
+    """
+    global scan_process, scan_thread
+    if scan_running.is_set():
+        return
 
-	def scan_thread_function():
-		global scan_process
-		try:
-			scan_process = subprocess.Popen(
-				['bluetoothctl'],
-				stdin=subprocess.PIPE,
-				stdout=subprocess.PIPE,
-				stderr=subprocess.PIPE,
-				text=True,
-				bufsize=1,
-				universal_newlines=True
-			)
-			scan_process.stdin.write('scan on\n')
-			scan_process.stdin.flush()
-			scan_running.set()
-			while scan_running.is_set():
-				time.sleep(0.1)
-		except Exception as e:
-			print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Scan thread failed: {e}")
-		finally:
-			if scan_process:
-				scan_process.stdin.write('scan off\n')
-				scan_process.stdin.flush()
-				time.sleep(1)
-				scan_process.terminate()
-				scan_process = None
+    def scan_thread_function():
+        global scan_process
+        try:
+            debug_print("Starting bluetoothctl scan process...")
+            scan_process = subprocess.Popen(
+                ['bluetoothctl'],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+            # Start scan command; flush immediately to push command through
+            scan_process.stdin.write('scan on\n')
+            scan_process.stdin.flush()
+            scan_running.set()
+            debug_print("Scan started; thread is idling while scan is active.")
+            # Keep the thread alive while the scan is needed
+            while scan_running.is_set():
+                time.sleep(0.1)
+        except Exception as e:
+            print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Scan thread failed: {e}")
+        finally:
+            if scan_process:
+                try:
+                    scan_process.stdin.write('scan off\n')
+                    scan_process.stdin.flush()
+                except Exception as e:
+                    debug_print(f"Error sending scan off command: {e}")
+                time.sleep(1)
+                scan_process.terminate()
+                scan_process = None
+                debug_print("Scan process terminated.")
 
-	scan_thread = threading.Thread(target=scan_thread_function, daemon=True)
-	scan_thread.start()
-	time.sleep(0.4)  # Allow time for scan to start
+    scan_thread = threading.Thread(target=scan_thread_function, daemon=True)
+    scan_thread.start()
+    # Allow a short period for the scan to initialize
+    time.sleep(0.4)
 
 def stop_scan():
-	global scan_process, scan_thread
-	if not scan_running.is_set():
-		return
-	scan_running.clear()
-	if scan_thread:
-		scan_thread.join(timeout=2)
-		scan_thread = None
+    """
+    Stop the bluetoothctl scan and cleanup the scan thread.
+    """
+    global scan_process, scan_thread
+    if not scan_running.is_set():
+        return
+    scan_running.clear()
+    if scan_thread:
+        scan_thread.join(timeout=2)
+        scan_thread = None
+    debug_print("Scan stopped.")
 
+# ------------------------------
+# ASHA PIPEWIRE SINK FUNCTIONS
+# ------------------------------
 def start_asha():
-	print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Checking ASHA PipeWire Sink...")
-	if not os.path.isdir(CLONE_DIR):
-		print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Cloning ASHA repository...")
-		run_command(f"git clone {REPO_URL} {CLONE_DIR}")
-	if not os.path.isfile(EXECUTABLE):
-		print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Building ASHA PipeWire Sink...")
-		os.makedirs(BUILD_DIR, exist_ok=True)
-		run_command("cmake ..", cwd=BUILD_DIR)
-		run_command("make", cwd=BUILD_DIR)
-	print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Launching ASHA PipeWire Sink using PTY...")
-	# Fork a child process attached to a PTY
-	child_pid, master_fd = pty.fork()
-	if child_pid == 0:
-		try:
-			os.execvp(EXECUTABLE, [EXECUTABLE])
-		except Exception as e:
-			print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Failed to execute ASHA: {e}")
-			sys.exit(1)
-	else:
-		return (child_pid, master_fd)
-
-# def stream_asha_output(asha_handle, clean_state, shutdown_event, asha_restart_event):
-	# global gatt_triggered
-	# child_pid, master_fd = asha_handle
-	# buffer = b""
-	# while not shutdown_event.is_set():
-		# try:
-			# rlist, _, _ = select.select([master_fd], [], [], 0.1)
-			# if master_fd in rlist:
-				# chunk = os.read(master_fd, 1024)
-				# if not chunk:
-					# break  # EOF reached
-				# buffer += chunk
-				# while b"\n" in buffer:
-					# line, buffer = buffer.split(b"\n", 1)
-					# decoded_line = line.decode(errors="ignore")
-					# if DEBUG:
-						# print(f"{Fore.BLUE}[ASHA]{Style.RESET_ALL} {decoded_line}")
-					
-					# if "Connected: false" in decoded_line and (PRIMARY_DEVICE in decoded_line or SECONDARY_DEVICE in decoded_line):
-						# print(f"{Fore.YELLOW}[INFO]{Style.RESET_ALL} ASHA reports device disconnected.")
-						# asha_restart_event.set()
-						# return
-
-					# if ("on_change_state" in decoded_line and 
-						# ("new: PAUSED" in decoded_line or "new: STREAMING" in decoded_line) and 
-						# not gatt_triggered and not clean_state):
-						# gatt_triggered = True
-						# time.sleep(0.1)
-						# print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Detected PAUSED state. Triggering GATT operations...")
-						# # Trigger for both devices – you could modify to trigger only the connected device if needed.
-						# for i in range(3):
-							# time.sleep(0.2)
-							# perform_gatt_operations(PRIMARY_DEVICE)
-							# perform_gatt_operations(SECONDARY_DEVICE)
-			# else:
-				# time.sleep(0.1)
-		# except Exception as e:
-			# if not shutdown_event.is_set():
-				# debug_print(f"Error reading from ASHA PTY: {e}")
-			# break
-	# debug_print("ASHA output streaming thread exiting")
+    """
+    Clone and build the ASHA PipeWire Sink if needed,
+    then launch it attached to a pseudo-terminal (PTY).
+    """
+    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Checking ASHA PipeWire Sink...")
+    if not os.path.isdir(CLONE_DIR):
+        print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Cloning ASHA repository...")
+        run_command(f"git clone {REPO_URL} {CLONE_DIR}")
+    if not os.path.isfile(EXECUTABLE):
+        print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Building ASHA PipeWire Sink...")
+        os.makedirs(BUILD_DIR, exist_ok=True)
+        run_command("cmake ..", cwd=BUILD_DIR)
+        run_command("make", cwd=BUILD_DIR)
+    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Launching ASHA PipeWire Sink using PTY...")
+    # Fork a child process attached to a PTY
+    child_pid, master_fd = pty.fork()
+    if child_pid == 0:
+        try:
+            os.execvp(EXECUTABLE, [EXECUTABLE])
+        except Exception as e:
+            print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Failed to execute ASHA: {e}")
+            sys.exit(1)
+    else:
+        return (child_pid, master_fd)
 
 def stream_asha_output(asha_handle, connected_device, clean_state, shutdown_event, asha_restart_event):
-	global gatt_triggered
-	child_pid, master_fd = asha_handle
-	buffer = b""
-	while not shutdown_event.is_set():
-		try:
-			rlist, _, _ = select.select([master_fd], [], [], 0.1)
-			if master_fd in rlist:
-				chunk = os.read(master_fd, 1024)
-				if not chunk:
-					break  # EOF reached
-				buffer += chunk
-				while b"\n" in buffer:
-					line, buffer = buffer.split(b"\n", 1)
-					decoded_line = line.decode(errors="ignore")
-					if DEBUG:
-						print(f"{Fore.BLUE}[ASHA]{Style.RESET_ALL} {decoded_line}")
-					
-					# When the device disconnects, trigger a restart.
-					if "Connected: false" in decoded_line and (PRIMARY_DEVICE in decoded_line or SECONDARY_DEVICE in decoded_line):
-						print(f"{Fore.YELLOW}[INFO]{Style.RESET_ALL} ASHA reports device disconnected.")
-						asha_restart_event.set()
-						return
+    """
+    Continuously read from the ASHA process output and trigger GATT operations based on state changes.
+    """
+    global gatt_triggered
+    child_pid, master_fd = asha_handle
+    buffer = b""
+    while not shutdown_event.is_set():
+        try:
+            rlist, _, _ = select.select([master_fd], [], [], 0.1)
+            if master_fd in rlist:
+                chunk = os.read(master_fd, 1024)
+                if not chunk:
+                    break  # EOF reached
+                buffer += chunk
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    decoded_line = line.decode(errors="ignore")
+                    if DEBUG:
+                        print(f"{Fore.BLUE}[ASHA]{Style.RESET_ALL} {decoded_line}")
 
-					# When a state change to PAUSED or STREAMING is detected,
-					# trigger GATT operations only on the connected device.
-					if ("on_change_state" in decoded_line and 
-						("new: PAUSED" in decoded_line or "new: STREAMING" in decoded_line) and 
-						not gatt_triggered and not clean_state):
-						gatt_triggered = True
-						time.sleep(0.1)
-						print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Detected PAUSED state. Triggering GATT operations on {connected_device}...")
-						for i in range(3):
-							time.sleep(0.2)
-							perform_gatt_operations(connected_device)
-			else:
-				time.sleep(0.1)
-		except Exception as e:
-			if not shutdown_event.is_set():
-				debug_print(f"Error reading from ASHA PTY: {e}")
-			break
-	debug_print("ASHA output streaming thread exiting")
+                    # Detect a disconnection event for the target devices
+                    if "Connected: false" in decoded_line and \
+                       (PRIMARY_DEVICE in decoded_line or SECONDARY_DEVICE in decoded_line):
+                        print(f"{Fore.YELLOW}[INFO]{Style.RESET_ALL} ASHA reports device disconnected.")
+                        asha_restart_event.set()
+                        return
 
+                    # Trigger GATT operations on PAUSED or STREAMING state if not already triggered
+                    if ("on_change_state" in decoded_line and 
+                        ("new: PAUSED" in decoded_line or "new: STREAMING" in decoded_line) and 
+                        not gatt_triggered and not clean_state):
+                        gatt_triggered = True
+                        time.sleep(0.1)
+                        print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Detected PAUSED state. Triggering GATT operations on {connected_device}...")
+                        # Perform GATT operations three times
+                        for i in range(3):
+                            time.sleep(0.2)
+                            perform_gatt_operations(connected_device)
+            else:
+                time.sleep(0.1)
+        except Exception as e:
+            if not shutdown_event.is_set():
+                debug_print(f"Error reading from ASHA PTY: {e}")
+            break
+    debug_print("ASHA output streaming thread exiting.")
 
+# ------------------------------
+# BLUETOOTH INITIALIZATION & PAIRING
+# ------------------------------
 def initialize_bluetooth():
-	print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Initializing Bluetooth stack...")
-	run_command("rfkill unblock bluetooth")
-	run_command("bluetoothctl power on")
-	run_command("bluetoothctl agent on")
-	print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Waiting for Bluetooth service to become ready...")
-	while True:
-		output = run_command("bluetoothctl show", capture_output=True)
-		if "Powered: yes" in output:
-			break
-		time.sleep(RETRY_DELAY)
-		run_command("bluetoothctl power on")
-	print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Bluetooth is powered and agent is active.")
-
-# ------------------------------
-# Asynchronous connection logic
-# ------------------------------
+    """
+    Power on Bluetooth, set the agent and ensure the service is ready.
+    """
+    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Initializing Bluetooth stack...")
+    run_command("rfkill unblock bluetooth")
+    run_command("bluetoothctl power on")
+    run_command("bluetoothctl agent on")
+    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Waiting for Bluetooth service to become ready...")
+    while True:
+        output = run_command("bluetoothctl show", capture_output=True)
+        if "Powered: yes" in output:
+            break
+        time.sleep(RETRY_DELAY)
+        run_command("bluetoothctl power on")
+    print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Bluetooth is powered and agent is active.")
 
 async def async_run_command(command, check=True, capture_output=False, input_text=None, cwd=None):
-	"""
-	Runs a command asynchronously using the default executor.
-	"""
-	loop = asyncio.get_running_loop()
-	return await loop.run_in_executor(
-		None,
-		lambda: run_command_silent(command, check=check, capture_output=capture_output, input_text=input_text, cwd=cwd)
-	)
+    """
+    Asynchronously run a shell command.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: run_command_silent(command, check=check, capture_output=capture_output, input_text=input_text, cwd=cwd)
+    )
 
 async def async_get_first_mac_address(device_name, poll_interval=1):
-	"""
-	Continuously polls for bluetooth devices and returns the first matching MAC address.
-	Uses case-insensitive matching on device names.
-	"""
-	while True:
-		output = await async_run_command("bluetoothctl devices", capture_output=True)
-		addresses = []
-		for line in output.splitlines():
-			if device_name.lower() in line.lower():
-				parts = line.strip().split()
-				if len(parts) >= 2:
-					addresses.append(parts[1])
-		if addresses:
-			# Return the first MAC address from the latest poll
-			return addresses[0]
-		await asyncio.sleep(poll_interval)
+    """
+    Continuously poll bluetoothctl for devices matching device_name.
+    Returns the first matching MAC address found.
+    """
+    while True:
+        output = await async_run_command("bluetoothctl devices", capture_output=True)
+        addresses = []
+        for line in output.splitlines():
+            if device_name.lower() in line.lower():
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    addresses.append(parts[1])
+        if addresses:
+            return addresses[0]  # Return the first MAC address found
+        await asyncio.sleep(poll_interval)
 
 async def async_connect_device(device_name, retry_interval=1, delay_after_connect=1):
-	"""
-	Continuously fetch the latest MAC address for device_name and try to connect asynchronously.
-	Always uses the newest MAC address from the polling function.
-	If the connection attempt fails, the device is removed and it retries after a delay.
-	"""
-	while True:
-		# Poll for a fresh MAC address.
-		mac_address = await async_get_first_mac_address(device_name)
-		print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Using MAC address: {mac_address} for device '{device_name}'")
+    """
+    Continuously poll for the device and attempt a connection.
+    Retries by removing failed connections.
+    """
+    while True:
+        mac_address = await async_get_first_mac_address(device_name)
+        print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Using MAC address: {mac_address} for device '{device_name}'")
+        try:
+            print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Attempting connection to {mac_address}...")
+            output = await async_run_command(f"bluetoothctl connect {mac_address}", capture_output=True)
+            if "Failed to connect" in output:
+                print(f"{Fore.YELLOW}[WARN]{Style.RESET_ALL} Connection attempt failed for {mac_address}: {output}")
+                await async_run_command(f"bluetoothctl remove {mac_address}", check=False)
+                await asyncio.sleep(retry_interval)
+                continue
 
-		try:
-			# Ensure clean state: disconnect and remove previous association if any.
-			#await async_run_command(f"bluetoothctl disconnect {mac_address}", check=False)
-			#await asyncio.sleep(0.2)
-			#await async_run_command(f"bluetoothctl remove {mac_address}", check=False)
-			#await asyncio.sleep(0.2)
-
-			# Attempt to connect using the fresh MAC address.
-			print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Attempting connection to {mac_address}...")
-			output = await async_run_command(f"bluetoothctl connect {mac_address}", capture_output=True)
-			if "Failed to connect" in output:
-				print(f"{Fore.YELLOW}[WARN]{Style.RESET_ALL} Connection attempt failed for {mac_address}: {output}")
-				await async_run_command(f"bluetoothctl remove {mac_address}", check=False)
-				await asyncio.sleep(retry_interval)
-				continue
-
-			# Allow some time for the connection to be established.
-			await asyncio.sleep(delay_after_connect)
-			info_output = await async_run_command(f"bluetoothctl info {mac_address}", capture_output=True)
-			if "Connected: yes" in info_output:
-				print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Successfully connected to '{device_name}' with {mac_address}!")
-				return mac_address
-			else:
-				print(f"{Fore.YELLOW}[WARN]{Style.RESET_ALL} Connection unstable with {mac_address}. Retrying.")
-				await async_run_command(f"bluetoothctl remove {mac_address}", check=False)
-				await asyncio.sleep(retry_interval)
-		except Exception as e:
-			print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Error connecting to {mac_address}: {e}")
-			await asyncio.sleep(retry_interval)
+            await asyncio.sleep(delay_after_connect)
+            info_output = await async_run_command(f"bluetoothctl info {mac_address}", capture_output=True)
+            if "Connected: yes" in info_output:
+                print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Successfully connected to '{device_name}' with {mac_address}!")
+                return mac_address
+            else:
+                print(f"{Fore.YELLOW}[WARN]{Style.RESET_ALL} Connection unstable with {mac_address}. Retrying.")
+                await async_run_command(f"bluetoothctl remove {mac_address}", check=False)
+                await asyncio.sleep(retry_interval)
+        except Exception as e:
+            print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Error connecting to {mac_address}: {e}")
+            await asyncio.sleep(retry_interval)
 
 async def async_connect_any(device1, device2):
-	"""
-	Attempts to connect to device1 and device2 concurrently. Returns as soon as one of them connects.
-	Cancels the other pending connection attempt.
-	"""
-	task1 = asyncio.create_task(async_connect_device(device1))
-	task2 = asyncio.create_task(async_connect_device(device2))
-	done, pending = await asyncio.wait({task1, task2}, return_when=asyncio.FIRST_COMPLETED)
-	for t in pending:
-		t.cancel()
-	if task1 in done:
-		return task1.result(), device1
-	else:
-		return task2.result(), device2
+    """
+    Concurrently attempt connection to two devices.
+    As soon as one connection is established, cancel the other.
+    """
+    task1 = asyncio.create_task(async_connect_device(device1))
+    task2 = asyncio.create_task(async_connect_device(device2))
+    done, pending = await asyncio.wait({task1, task2}, return_when=asyncio.FIRST_COMPLETED)
+    for t in pending:
+        t.cancel()
+    if task1 in done:
+        return task1.result(), device1
+    else:
+        return task2.result(), device2
+
+async def async_pair_device():
+    """
+    Run pairing mode: scan for devices, update device list continuously,
+    and let the user choose the device to pair.
+    """
+    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Starting pairing mode...")
+    initialize_bluetooth()
+    
+    start_scan()
+    devices = {}
+    refresh_event = asyncio.Event()
+    paired_mac = None
+
+    async def update_device_list():
+        nonlocal devices
+        while True:
+            output = await async_run_command("bluetoothctl devices", capture_output=True)
+            current_devices = {}
+            for line in output.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    mac = parts[1]
+                    name = ' '.join(parts[2:]) if len(parts) > 2 else 'Unknown'
+                    current_devices[mac] = name
+                
+            # Print any newly discovered devices
+            new_devices = set(current_devices.keys()) - set(devices.keys())
+            for mac in new_devices:
+                print(f"{Fore.GREEN}[NEW]{Style.RESET_ALL} Found device: {mac} - {current_devices[mac]}")
+            devices = current_devices
+            refresh_event.set()
+            await asyncio.sleep(2)
+
+    async def get_user_input():
+        loop = asyncio.get_running_loop()
+        while True:
+            prompt = f"\n{Fore.CYAN}[INPUT]{Style.RESET_ALL} Enter MAC/name to pair (Enter=refresh, q=quit): "
+            try:
+                selection = await loop.run_in_executor(None, lambda: input(prompt))
+            except asyncio.CancelledError:
+                return None
+            selection = selection.strip().lower()
+            if selection == 'q':
+                return None
+            if selection == '':
+                refresh_event.clear()
+                await refresh_event.wait()
+                continue
+            # Look for a matching device (MAC or name)
+            for mac, name in devices.items():
+                if selection in [mac.lower(), name.lower()]:
+                    return mac
+            print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Device not found. Current devices:")
+            for mac, name in devices.items():
+                print(f"  {mac} - {name}")
+
+    # Run update and user input concurrently
+    update_task = asyncio.create_task(update_device_list())
+    input_task = asyncio.create_task(get_user_input())
+    done, pending = await asyncio.wait(
+        [update_task, input_task],
+        return_when=asyncio.FIRST_COMPLETED
+    )
+    update_task.cancel()
+    try:
+        await update_task
+    except asyncio.CancelledError:
+        pass
+
+    if input_task.done():
+        selected_mac = input_task.result()
+        if selected_mac:
+            print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Attempting to pair with {selected_mac}...")
+            try:
+                await async_run_command(f"bluetoothctl pair {selected_mac}")
+                await async_run_command(f"bluetoothctl trust {selected_mac}")
+                print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Successfully paired and trusted {selected_mac}!")
+                paired_mac = selected_mac
+            except subprocess.CalledProcessError as e:
+                print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Pairing failed: {e}")
+    return paired_mac
 
 # ------------------------------
-# Synchronous (legacy) functions
+# LEGACY SYNC FUNCTIONS
 # ------------------------------
 def scan_and_connect():
-	print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Starting BLE scan...")
-	start_scan()
-	time.sleep(10)
-	stop_scan()
-	
-	devices = {}
-	output = run_command("bluetoothctl devices", capture_output=True)
-	for line in output.splitlines():
-		parts = line.strip().split()
-		if len(parts) >= 2:
-			mac = parts[1]
-			name = ' '.join(parts[2:]) if len(parts) > 2 else 'Unknown'
-			devices[mac] = name
+    """
+    Synchronous scan and connect routine.
+    """
+    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Starting BLE scan...")
+    start_scan()
+    time.sleep(10)
+    stop_scan()
+    
+    devices = {}
+    output = run_command("bluetoothctl devices", capture_output=True)
+    for line in output.splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 2:
+            mac = parts[1]
+            name = ' '.join(parts[2:]) if len(parts) > 2 else 'Unknown'
+            devices[mac] = name
 
-	print(f"\n{Fore.CYAN}[DISCOVERED DEVICES]{Style.RESET_ALL}")
-	for mac, name in devices.items():
-		print(f"{mac}: {name}")
+    print(f"\n{Fore.CYAN}[DISCOVERED DEVICES]{Style.RESET_ALL}")
+    for mac, name in devices.items():
+        print(f"{mac}: {name}")
 
-	while True:
-		selection = input(f"\n{Fore.CYAN}[INPUT]{Style.RESET_ALL} Enter MAC address or device name to connect (q to quit): ").strip()
-		if selection.lower() == 'q':
-			return False
-		for mac, name in devices.items():
-			if selection.lower() == mac.lower() or selection.lower() in name.lower():
-				print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Attempting connection to {mac} ({name})...")
-				output = run_command(f"bluetoothctl connect {mac}", capture_output=True, check=False)
-				if "Connection successful" in output:
-					print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Connected to {name}!")
-					return True
-				else:
-					print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Connection failed")
-		print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} No matching device found")
+    while True:
+        selection = input(f"\n{Fore.CYAN}[INPUT]{Style.RESET_ALL} Enter MAC address or device name to connect (q to quit): ").strip()
+        if selection.lower() == 'q':
+            return False
+        for mac, name in devices.items():
+            if selection.lower() == mac.lower() or selection.lower() in name.lower():
+                print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Attempting connection to {mac} ({name})...")
+                output = run_command(f"bluetoothctl connect {mac}", capture_output=True, check=False)
+                if "Connection successful" in output:
+                    print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Connected to {name}!")
+                    return True
+                else:
+                    print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Connection failed")
+        print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} No matching device found")
 
 def remove_and_reconnect(device_name):
-	# Legacy synchronous removal and reconnection
-	# (async functions are used for primary connection logic now)
-	print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Removing and reconnecting device '{device_name}'...")
-	asyncio.run(async_connect_device(device_name))
-	return True
+    """
+    Legacy removal and reconnection function.
+    """
+    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Removing and reconnecting device '{device_name}'...")
+    asyncio.run(async_connect_device(device_name))
+    return True
 
 def perform_gatt_operations(device_name):
-	# For backward compatibility, this function still uses the synchronous run_command,
-	# matching MAC addresses by the current device name.
-	# You could update this asynchronously in a similar manner if needed.
-	output = run_command("bluetoothctl devices", capture_output=True)
-	addresses = []
-	for line in output.splitlines():
-		if device_name.lower() in line.lower():
-			parts = line.strip().split()
-			if len(parts) >= 2:
-				addresses.append(parts[1])
-	if not addresses:
-		print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Device '{device_name}' not found.")
-		return False
+    """
+    Perform GATT operations for the given device name.
+    Looks up the current MAC addresses corresponding to device_name then uses bluetoothctl to send GATT commands.
+    """
+    output = run_command("bluetoothctl devices", capture_output=True)
+    addresses = []
+    for line in output.splitlines():
+        if device_name.lower() in line.lower():
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                addresses.append(parts[1])
+    if not addresses:
+        print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Device '{device_name}' not found.")
+        return False
 
-	print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Performing GATT operations on {device_name}...")
-	for mac_address in addresses:
-		print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Trying MAC: {mac_address}...")
-		commands = f"""connect {mac_address}
+    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Performing GATT operations on {device_name}...")
+    for mac_address in addresses:
+        print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Trying MAC: {mac_address}...")
+        commands = f"""connect {mac_address}
 gatt.select-attribute {GATT_ATTRIBUTE}
 gatt.write {VOLUME_VALUE}
 exit
 """
-		process = subprocess.Popen(
-			["bluetoothctl"],
-			stdin=subprocess.PIPE,
-			stdout=subprocess.PIPE,
-			stderr=subprocess.PIPE,
-			text=True
-		)
-		stdout, stderr = process.communicate(commands)
-		if process.returncode == 0:
-			print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} GATT operations completed on {mac_address}!")
-			return True
-		else:
-			print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Failed on {mac_address}: {stderr}")
-	print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} All MAC addresses failed for GATT operations")
-	return False
+        process = subprocess.Popen(
+            ["bluetoothctl"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        stdout, stderr = process.communicate(commands)
+        if process.returncode == 0:
+            print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} GATT operations completed on {mac_address}!")
+            return True
+        else:
+            print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} Failed on {mac_address}: {stderr}")
+    print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} All MAC addresses failed for GATT operations")
+    return False
 
 # ------------------------------
-# Main function
+# MAIN FUNCTIONALITY
 # ------------------------------
 def main():
-	parser = argparse.ArgumentParser(description='Connect to Bluetooth devices and manage ASHA PipeWire Sink.')
-	parser.add_argument('-c', '--clean-state', action='store_true', 
-						help='Skip automatic GATT operations on state change')
-	parser.add_argument('-r', '--reconnect', action='store_true',
-						help='Enable automatic ASHA restart if device disconnects')
-	parser.add_argument('-d', '--disconnect', action='store_true',
-						help='Disconnect upon Keyboard Interrupt')
-	args = parser.parse_args()
+    parser = argparse.ArgumentParser(
+        description='Connect to Bluetooth devices and manage ASHA PipeWire Sink.'
+    )
+    parser.add_argument('-c', '--clean-state', action='store_true',
+                        help='Skip automatic GATT operations on state change')
+    parser.add_argument('-r', '--reconnect', action='store_true',
+                        help='Enable automatic ASHA restart if device disconnects')
+    parser.add_argument('-d', '--disconnect', action='store_true',
+                        help='Disconnect Bluetooth upon Keyboard Interrupt')
+    parser.add_argument('-p', '--pair', action='store_true',
+                        help='Enable pairing mode')
+    args = parser.parse_args()
 
-	shutdown_event = threading.Event()
-	asha_restart_event = threading.Event()
+    shutdown_event = threading.Event()
+    asha_restart_event = threading.Event()
 
-	try:
-		# Main connection loop
-		while not shutdown_event.is_set():
-			global gatt_triggered
-			gatt_triggered = False
-			
-			initialize_bluetooth()
-			
-			print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Enabling bluetoothctl scan...")
-			run_command("bluetoothctl discoverable on", check=False)
-			start_scan()
-			
-			# Instead of using the synchronous connect_device,
-			# we run both asynchronous connection attempts concurrently and use whichever connects first.
-			print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Attempting asynchronous connection to devices...")
-			connected_mac, connected_device = asyncio.run(async_connect_any(PRIMARY_DEVICE, SECONDARY_DEVICE))
-			print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Connected to {connected_device} using MAC {connected_mac}!")
-			
-			# Stop scan after successful connection.
-			print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Disabling bluetoothctl scan...")
-			stop_scan()
-			run_command("bluetoothctl discoverable off", check=False)
-			
-			# ASHA management loop
-			while not shutdown_event.is_set():
-				gatt_triggered = False
-				# Start ASHA sink
-				asha_handle = start_asha()
-				# asha_thread = threading.Thread(
-					# target=stream_asha_output,
-					# args=(asha_handle, args.clean_state, shutdown_event, asha_restart_event),
-					# daemon=True
-				# )
-				asha_thread = threading.Thread(
-					target=stream_asha_output,
-					args=(asha_handle, connected_device, args.clean_state, shutdown_event, asha_restart_event),
-					daemon=True
-				)
-				asha_thread.start()
-				print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} ASHA PipeWire Sink is running. Press Ctrl+C to exit.")
-				try:
-					# Wait for exit or restart condition
-					while not shutdown_event.is_set() and not asha_restart_event.is_set():
-						time.sleep(1)
-				except KeyboardInterrupt:
-					print(f"\n{Fore.BLUE}[INFO]{Style.RESET_ALL} KeyboardInterrupt received. Exiting...")
-					shutdown_event.set()
-					break
-				# Handle restart condition
-				if asha_restart_event.is_set():
-					print(f"{Fore.YELLOW}[INFO]{Style.RESET_ALL} Restarting Bluetooth stack...")
-					try:
-						# Cleanup ASHA
-						os.kill(asha_handle[0], signal.SIGTERM)
-						asha_thread.join(timeout=2)
-					except Exception as e:
-						print(f"{Fore.YELLOW}[WARN]{Style.RESET_ALL} ASHA cleanup error: {e}")
-					# Cleanup Bluetooth
-					run_command("bluetoothctl disconnect", check=False)
-					run_command("bluetoothctl power off", check=False)
-					if args.reconnect:
-						print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Preparing for reconnection...")
-						asha_restart_event.clear()
-						break  # Exit ASHA loop to restart entire process
-					else:
-						shutdown_event.set()
-						break
+    try:
+        # Initialize Bluetooth and start advertising before attempting connections.
+        initialize_bluetooth()
+        start_advertising()
 
-	except Exception as e:
-		print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} An error occurred: {e}")
-		shutdown_event.set()
-	finally:
-		# Final cleanup
-		print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Performing final cleanup...")
-		shutdown_event.set()
-		stop_scan()
-		run_command("bluetoothctl discoverable off", check=False)
-		if args.disconnect:
-			run_command("bluetoothctl power off", check=False)
-		if 'asha_handle' in locals() and asha_handle is not None:
-			try:
-				os.kill(asha_handle[0], signal.SIGTERM)
-				print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Terminated ASHA process.")
-			except Exception as e:
-				print(f"{Fore.YELLOW}[WARN]{Style.RESET_ALL} Error terminating ASHA process: {e}")
-		sys.exit(0)
+        print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Enabling bluetoothctl scan...")
+        run_command("bluetoothctl discoverable on", check=False)
+        start_scan()
+
+        if not args.pair:
+            # Try to connect to either the primary or secondary device concurrently.
+            print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Attempting asynchronous connection to devices...")
+            connected_mac, connected_device = asyncio.run(async_connect_any(PRIMARY_DEVICE, SECONDARY_DEVICE))
+            print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Connected to {connected_device} using MAC {connected_mac}!")
+        else:
+            # Enter pairing mode if the '-p/--pair' argument is passed.
+            print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Entering pairing mode...")
+            paired_mac = asyncio.run(async_pair_device())
+            if paired_mac:
+                print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Pairing complete with {paired_mac}")
+            else:
+                print(f"{Fore.YELLOW}[WARN]{Style.RESET_ALL} Pairing process aborted")
+            return
+
+        # Stop scanning once connected and set device to non-discoverable.
+        print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Disabling bluetoothctl scan...")
+        stop_scan()
+        run_command("bluetoothctl discoverable off", check=False)
+
+        # Start and monitor the ASHA PipeWire Sink process.
+        while not shutdown_event.is_set():
+            global gatt_triggered
+            gatt_triggered = False
+            asha_handle = start_asha()
+            asha_thread = threading.Thread(
+                target=stream_asha_output,
+                args=(asha_handle, connected_device, args.clean_state, shutdown_event, asha_restart_event),
+                daemon=True
+            )
+            asha_thread.start()
+            print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} ASHA PipeWire Sink is running. Press Ctrl+C to exit.")
+            try:
+                # Wait until an exit or restart condition is signaled.
+                while not shutdown_event.is_set() and not asha_restart_event.is_set():
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print(f"\n{Fore.BLUE}[INFO]{Style.RESET_ALL} KeyboardInterrupt received. Exiting...")
+                shutdown_event.set()
+                break
+
+            # If ASHA indicates a disconnect or state change, perform a restart.
+            if asha_restart_event.is_set():
+                print(f"{Fore.YELLOW}[INFO]{Style.RESET_ALL} Restarting Bluetooth stack...")
+                try:
+                    os.kill(asha_handle[0], signal.SIGTERM)
+                    asha_thread.join(timeout=2)
+                except Exception as e:
+                    print(f"{Fore.YELLOW}[WARN]{Style.RESET_ALL} ASHA cleanup error: {e}")
+                # Disconnect Bluetooth and power off if necessary.
+                run_command("bluetoothctl disconnect", check=False)
+                run_command("bluetoothctl power off", check=False)
+                if args.reconnect:
+                    print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Preparing for reconnection...")
+                    asha_restart_event.clear()
+                    break  # Break out to restart the main connection loop.
+                else:
+                    shutdown_event.set()
+                    break
+            else:
+                break
+
+    except Exception as e:
+        print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} An error occurred: {e}")
+        shutdown_event.set()
+    finally:
+        # Final cleanup to ensure proper shutdown of scan, advertisement, and Bluetooth processes.
+        print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Performing final cleanup...")
+        shutdown_event.set()
+        stop_scan()
+        run_command("bluetoothctl discoverable off", check=False)
+        stop_advertising()
+        if args.disconnect:
+            run_command("bluetoothctl power off", check=False)
+        if 'asha_handle' in locals() and asha_handle is not None:
+            try:
+                os.kill(asha_handle[0], signal.SIGTERM)
+                print(f"{Fore.BLUE}[INFO]{Style.RESET_ALL} Terminated ASHA process.")
+            except Exception as e:
+                print(f"{Fore.YELLOW}[WARN]{Style.RESET_ALL} Error terminating ASHA process: {e}")
+        sys.exit(0)
 
 if __name__ == "__main__":
-	while True:
-		try:
-			main()
-		except KeyboardInterrupt:
-			exit()
+    # Wrap main() in an endless loop to automatically restart if needed.
+    while True:
+        try:
+            main()
+        except KeyboardInterrupt:
+            sys.exit(0)
+
