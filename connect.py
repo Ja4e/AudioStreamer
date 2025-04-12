@@ -352,8 +352,8 @@ def handle_new_device(mac, name):
 				print(f"{Fore.GREEN}[SUCCESS]{Style.RESET_ALL} Connected to {name} ({mac})!")
 				run_command("bluetoothctl pairable off", check=False)
 				
-				if not args.clean_state:
-					perform_gatt_operations(mac, name)
+				#if not args.clean_state:
+				#	perform_gatt_operations(mac, name)
 	else:
 		with processed_lock:
 			processed_devices.discard(mac)
@@ -600,7 +600,7 @@ def main():
 						pass
 				asha_handle = start_asha()
 				asha_restart_event.clear()
-				run_command("bluetoothctl scan off", check=False)
+				# run_command("bluetoothctl scan off", check=False)
 				threading.Thread(
 					target=stream_asha_output,
 					args=(asha_handle, shutdown_event, asha_restart_event),
@@ -642,3 +642,5 @@ def main():
 
 if __name__ == "__main__":
 	main()
+
+
