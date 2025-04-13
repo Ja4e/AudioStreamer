@@ -24,7 +24,6 @@ reduces the chances of getting reported org.bluez.Error.Failed connection abort-
 Tested with Intel AX210 – it should also work with other functional Bluetooth adapters.
 It is now comparable to Apple's Bluetooth approach to ASHA devices.
 """
-#!/usr/bin/env python3
 import os
 import pty
 import subprocess
