@@ -51,7 +51,7 @@ colorama_init(autoreset=True)
 DEBUG = os.getenv('DEBUG', '0') == '1'
 PRIMARY_FILTER = "RTL's Hearing Device" # THe name of your device that setup at first
 SECONDARY_FILTER = "AudioStream Adapter" # The default name of your device
-REPO_URL = "https://github.com/thewierdnut/asha_pipewire_sink.git" 
+REPO_URL = "https://github.com/thewierdnut/asha_pipewire_sink.git"  # please do read these documentation in this its only 1 page long
 CLONE_DIR = os.path.expanduser("~/asha_pipewire_sink")
 BUILD_DIR = os.path.join(CLONE_DIR, "build")
 EXECUTABLE = os.path.join(BUILD_DIR, "asha_pipewire_sink")
