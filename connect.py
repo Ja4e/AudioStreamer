@@ -169,6 +169,7 @@ class Advertisement(dbus.service.Object):
 				'ServiceUUIDs': dbus.Array(self.service_uuids, signature='s'),
 				'Includes': dbus.Array(self.includes, signature='s'),
 				'LocalName': self.local_name,
+				'LegacyAdvertising': dbus.Boolean(True) #Some devices requires this
 			}
 		}
 
