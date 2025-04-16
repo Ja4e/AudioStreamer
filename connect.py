@@ -62,6 +62,10 @@ Selected phys: BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT ED
 
 # copy the Selected phys, and add the new LE2MTX LE2MRX values to it
 sudo btmgmt phy BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT EDR3M1SLOT EDR3M3SLOT EDR3M5SLOT LE1MTX LE1MRX LE2MTX LE2MRX
+
+
+The latest three commits from that asha is currently very broken 
+try attempt running git reset --hard HEAD~1 in that commit before compiling
 """
 import os
 import pty
