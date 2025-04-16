@@ -549,15 +549,18 @@ class BluetoothAshaManager:
 	def stream_asha_output(self, asha_handle: Tuple[int, int]) -> None:
 		"""
 		Reads the ASHA output and watches for connection drops or GATT triggers.
-		Detects lines with "Ring Occupancy:" and highlights changed numeric values compared to previous readings.
-		Uses the instance attribute self.gatt_triggered instead of a global variable.
 		"""
 		child_pid, master_fd = asha_handle
 		buffer = b""
 		last_stats: Optional[dict] = None
+
+		# Updated regex to optionally capture Rssi: <val>, <val>
 		ring_regex = re.compile(
-			r"Ring Occupancy:\s*(\d+)\s+High:\s*(\d+)\s+Ring Dropped:\s*(\d+)\s+Total:\s*(\d+)\s+Adapter Dropped:\s*(\d+)\s+Total:\s*(\d+)\s+Silence:\s*(\d+)\s+Total:\s*(\d+)"
+			r"Ring Occupancy:\s*(\d+)\s+High:\s*(\d+)\s+Ring Dropped:\s*(\d+)\s+Total:\s*(\d+)\s+"
+			r"Adapter Dropped:\s*(\d+)\s+Total:\s*(\d+)\s+Silence:\s*(\d+)\s+Total:\s*(\d+)"
+			r"(?:\s+Rssi:\s*(\d+),\s*(\d+))?"
 		)
+
 		while not shutdown_evt.is_set():
 			try:
 				rlist, _, _ = select.select([master_fd], [], [], 0.1)
@@ -572,6 +575,7 @@ class BluetoothAshaManager:
 						if "Ring Occupancy:" in decoded:
 							match = ring_regex.search(decoded)
 							if match:
+								# Fields for core stats
 								fields = [
 									"Ring Occupancy",
 									"High",
@@ -580,9 +584,18 @@ class BluetoothAshaManager:
 									"Adapter Dropped",
 									"Adapter Total",
 									"Silence",
-									"Silence Total"
+									"Silence Total",
 								]
-								current_stats = {field: int(value) for field, value in zip(fields, match.groups())}
+								values = match.groups()
+
+								# Main numeric values
+								current_stats = {field: int(val) for field, val in zip(fields, values[:8])}
+
+								# Optional Rssi values
+								rssi_str = ""
+								if values[8] is not None and values[9] is not None:
+									rssi_str = f" Rssi: {values[8]}, {values[9]}"
+
 								highlighted_parts = {}
 								if last_stats is None:
 									highlighted_parts = {field: str(current_stats[field]) for field in fields}
@@ -594,6 +607,7 @@ class BluetoothAshaManager:
 											highlighted_parts[field] = f"{Fore.YELLOW}{current_stats[field]}{Style.RESET_ALL}"
 										else:
 											highlighted_parts[field] = str(current_stats[field])
+
 								highlighted_line = (
 									f"Ring Occupancy: {highlighted_parts['Ring Occupancy']} "
 									f"High: {highlighted_parts['High']} "
@@ -603,25 +617,16 @@ class BluetoothAshaManager:
 									f"Total: {highlighted_parts['Adapter Total']} "
 									f"Silence: {highlighted_parts['Silence']} "
 									f"Total: {highlighted_parts['Silence Total']}"
+									f"{rssi_str}"
 								)
+
 								logger.debug(f"{Fore.BLUE}[ASHA]{Style.RESET_ALL} {highlighted_line}")
 								last_stats = current_stats
 							else:
 								logger.debug(f"{Fore.BLUE}[ASHA]{Style.RESET_ALL} {decoded}")
-								
-								"""
-								Field:			Meaning:
-								Ring Occupancy		Number of slots currently filled in the ring buffer. This shows how many audio packets are currently buffered.
-								High			Highest ring occupancy recorded (peak usage).
-								Ring Dropped		Number of packets dropped from the ring buffer due to overflow.
-								Ring Total		Total number of packets pushed to the ring buffer.
-								Adapter Dropped		Packets dropped by the Bluetooth adapter (often due to transmission failure).
-								Adapter Total		Total number of packets sent out by the adapter.
-								Silence			Number of silent packets inserted (usually to maintain timing or compensate for dropout).
-								Silence Total		Total number of silence packets sent over time.
-								"""
 						else:
 							logger.debug(f"{Fore.BLUE}[ASHA]{Style.RESET_ALL} {decoded}")
+
 						if any(phrase in decoded for phrase in [
 							"Connected: false",
 							"Assertion `!m_sock' failed.",
@@ -638,6 +643,7 @@ class BluetoothAshaManager:
 								reconnect_evt.set()
 								asha_restart_evt.set()
 							return
+
 						if ("on_change_state" in decoded and
 								("new: PAUSED" in decoded or "new: STREAMING" in decoded) and
 								not self.gatt_triggered and not self.args.clean_state):
@@ -653,6 +659,7 @@ class BluetoothAshaManager:
 				if not shutdown_evt.is_set():
 					logger.error(f"ASHA stream error: {e}")
 				break
+
 
 	def perform_gatt_operations(self, mac_address: str, device_name: str) -> bool:
 		"""
