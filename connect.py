@@ -64,8 +64,8 @@ Selected phys: BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT ED
 sudo btmgmt phy BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT EDR3M1SLOT EDR3M3SLOT EDR3M5SLOT LE1MTX LE1MRX LE2MTX LE2MRX
 
 
-The latest three commits from that asha is currently very broken 
-try attempt running git reset --hard HEAD~1 in that commit before compiling
+#The latest three commits from that asha is currently very broken (Fixed)
+#try attempt running git reset --hard HEAD~1 in that commit before compiling 
 """
 import os
 import pty
@@ -218,6 +218,7 @@ def disable_pairable_background() -> None:
 		logger.warning(f"Failed to run bluetoothctl pairable off: {e}")
 
 
+
 # ------------------------------
 # ADVERTISEMENT MANAGEMENT
 # ------------------------------
@@ -268,12 +269,34 @@ class BluetoothAshaManager:
 		self.scan_thread: Optional[threading.Thread] = None
 		self.gatt_triggered: bool = False  # Instance flag for GATT trigger
 		self.ad_registered: bool = False   # Track advertisement registration status
+		# Store a reference to the DBus system bus for signal handling
+		self.dbus_bus = None
+
+	# DBus Signal Handler
+	def device_property_changed(self, interface, changed, invalidated, path):
+		"""
+		Handle DBus PropertiesChanged signals for BlueZ devices.
+		Listens on the org.bluez.Device1 interface, and logs connection state changes.
+		Triggers reconnect if device disconnects and reconnect option is enabled.
+		"""
+		if interface != "org.bluez.Device1":
+			return
+		if "Connected" in changed:
+			connected = changed["Connected"]
+			logger.info(f"Device at {path} connection state changed to: {connected}")
+			if not connected and self.args.reconnect:
+				# Optionally, remove the device from the connected list here.
+				with connected_list_lock:
+					# This is a simple mechanism to clear disconnected devices.
+					global_connected_list[:] = [(mac, name) for mac, name in global_connected_list if path not in mac]
+				reconnect_evt.set()
 
 	# Bluetooth Initialization
 
 	def initialize_bluetooth(self) -> None:
 		"""
 		Initialize Bluetooth by unblocking it, powering on, and setting up agents.
+		Also registers DBus signal receiver for device connection changes.
 		"""
 		logger.info(f"{Fore.BLUE}Initializing Bluetooth...{Style.RESET_ALL}")
 		run_command("rfkill unblock bluetooth")
@@ -292,6 +315,16 @@ class BluetoothAshaManager:
 				break
 			time.sleep(1)
 		logger.info(f"{Fore.GREEN}Bluetooth initialized{Style.RESET_ALL}")
+
+		# Set up DBus main loop and add signal receiver for device property changes.
+		dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+		self.dbus_bus = dbus.SystemBus()
+		self.dbus_bus.add_signal_receiver(
+			self.device_property_changed,
+			dbus_interface="org.freedesktop.DBus.Properties",
+			signal_name="PropertiesChanged",
+			path_keyword="path"
+		)
 
 	def start_advertising(self, disable_advertisement: bool = False) -> None:
 		"""
@@ -660,7 +693,6 @@ class BluetoothAshaManager:
 					logger.error(f"ASHA stream error: {e}")
 				break
 
-
 	def perform_gatt_operations(self, mac_address: str, device_name: str) -> bool:
 		"""
 		Perform GATT operations by connecting to the device, selecting the attribute,
@@ -690,7 +722,6 @@ exit
 		except Exception as e:
 			logger.error(f"{Fore.RED}GATT exception: {e}{Style.RESET_ALL}")
 			return False
-
 
 	def monitor_mac_changes(self) -> None:
 		"""
