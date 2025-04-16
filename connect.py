@@ -26,7 +26,7 @@ It is now comparable to Apple's Bluetooth approach to ASHA devices.
 
 
 This script minimizes **unintended disconnections** with ASHA G.722 hearing aids
-by handling edge cases and reducing real-world timing unpredictability that 
+by handling edge cases and reduces real-world timing unpredictability that 
 normally affect connection success. Without it, stable connections often rely 
 on physical-layer 'luck' and system-specific timing.
 
@@ -52,6 +52,11 @@ MaxConnectionInterval=16
 ConnectionLatency=10
 ConnectionSupervisionTimeout=100
 
+For people who has MEDEL's latest products it inbuilt low energy capabilities but not for audio streaming but rather for controlling and "find-my" app functionalities, and the audio stream adapter is for ble audio streaming capabilities
+but currently it does not work properly buecase My laptop has not managed to find them thus renders these passive advertising useless however I find pairing between two are more solid with it so its may or may not worthed it
+the latest updated program by a guy does proper active advertising connection between devices requires proper setup that requires you to uncomment in that /etc/bluetooth/main.conf command to Experimental = true
+but this isnt the case it causes problems which will report undocumented error: DBus.Error:org.bluez.Error.Failed: Operation failed with ATT error: 0x48 
+So for people who owns this device please do not enable this. 
 
 Enable 2M PHY (optional):
 # Check the existing phys
