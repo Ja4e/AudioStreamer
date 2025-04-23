@@ -222,8 +222,6 @@ def disable_pairable_background() -> None:
 	except Exception as e:
 		logger.warning(f"Failed to run bluetoothctl pairable off: {e}")
 
-
-
 # ------------------------------
 # ADVERTISEMENT MANAGEMENT
 # ------------------------------
@@ -274,34 +272,12 @@ class BluetoothAshaManager:
 		self.scan_thread: Optional[threading.Thread] = None
 		self.gatt_triggered: bool = False  # Instance flag for GATT trigger
 		self.ad_registered: bool = False   # Track advertisement registration status
-		# Store a reference to the DBus system bus for signal handling
-		self.dbus_bus = None
-
-	# DBus Signal Handler
-	def device_property_changed(self, interface, changed, invalidated, path):
-		"""
-		Handle DBus PropertiesChanged signals for BlueZ devices.
-		Listens on the org.bluez.Device1 interface, and logs connection state changes.
-		Triggers reconnect if device disconnects and reconnect option is enabled.
-		"""
-		if interface != "org.bluez.Device1":
-			return
-		if "Connected" in changed:
-			connected = changed["Connected"]
-			logger.info(f"Device at {path} connection state changed to: {connected}")
-			if not connected and self.args.reconnect:
-				# Optionally, remove the device from the connected list here.
-				with connected_list_lock:
-					# This is a simple mechanism to clear disconnected devices.
-					global_connected_list[:] = [(mac, name) for mac, name in global_connected_list if path not in mac]
-				reconnect_evt.set()
 
 	# Bluetooth Initialization
 
 	def initialize_bluetooth(self) -> None:
 		"""
 		Initialize Bluetooth by unblocking it, powering on, and setting up agents.
-		Also registers DBus signal receiver for device connection changes.
 		"""
 		logger.info(f"{Fore.BLUE}Initializing Bluetooth...{Style.RESET_ALL}")
 		run_command("rfkill unblock bluetooth")
@@ -320,16 +296,6 @@ class BluetoothAshaManager:
 				break
 			time.sleep(1)
 		logger.info(f"{Fore.GREEN}Bluetooth initialized{Style.RESET_ALL}")
-
-		# Set up DBus main loop and add signal receiver for device property changes.
-		dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-		self.dbus_bus = dbus.SystemBus()
-		self.dbus_bus.add_signal_receiver(
-			self.device_property_changed,
-			dbus_interface="org.freedesktop.DBus.Properties",
-			signal_name="PropertiesChanged",
-			path_keyword="path"
-		)
 
 	def start_advertising(self, disable_advertisement: bool = False) -> None:
 		"""
@@ -562,12 +528,23 @@ class BluetoothAshaManager:
 			run_command("cmake ..", cwd=BUILD_DIR)
 			run_command("make", cwd=BUILD_DIR)
 
+		# Check if cap_net_raw is already set
+		try:
+			result = subprocess.run(["getcap", EXECUTABLE], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+			if "cap_net_raw+ep" not in result.stdout:
+				logger.info("Setting cap_net_raw+ep on ASHA sink executable...")
+				subprocess.run(["sudo", "setcap", "cap_net_raw+ep", EXECUTABLE], check=True)
+			else:
+				logger.info("ASHA sink already has cap_net_raw+ep.")
+		except subprocess.CalledProcessError as e:
+			logger.error(f"Failed to set/get capabilities: {e}")
+
 		logger.info("Starting ASHA sink...")
 		master_fd, slave_fd = pty.openpty()
 		# Launch the ASHA sink wrapped in stdbuf to force line buffering.
 		try:
 			proc = subprocess.Popen(
-				["stdbuf", "-oL", EXECUTABLE],
+				["stdbuf", "-oL", EXECUTABLE, "--buffer_algorithm", "threaded", "--phy1m"], #can be changed to --phy2m
 				preexec_fn=os.setsid,
 				stdin=slave_fd,
 				stdout=slave_fd,
@@ -667,7 +644,7 @@ class BluetoothAshaManager:
 
 						if any(phrase in decoded for phrase in [
 							"Connected: false",
-							"Assertion `!m_sock' failed.",
+							"Assertion !m_sock' failed.",
 							"GDBus.Error:org.bluez.Error.InProgress: In Progress",
 							"GDBus.Error:org.freedesktop.DBus.Error.NoReply: Remote peer disconnected",
 							"Timeout was reached",
@@ -698,6 +675,7 @@ class BluetoothAshaManager:
 					logger.error(f"ASHA stream error: {e}")
 				break
 
+
 	def perform_gatt_operations(self, mac_address: str, device_name: str) -> bool:
 		"""
 		Perform GATT operations by connecting to the device, selecting the attribute,
@@ -727,6 +705,7 @@ exit
 		except Exception as e:
 			logger.error(f"{Fore.RED}GATT exception: {e}{Style.RESET_ALL}")
 			return False
+
 
 	def monitor_mac_changes(self) -> None:
 		"""
