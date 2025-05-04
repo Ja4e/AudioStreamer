@@ -71,6 +71,10 @@ sudo btmgmt phy BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT E
 
 #The latest three commits from that asha is currently very broken (Fixed)
 #try attempt running git reset --hard HEAD~1 in that commit before compiling 
+
+try set to ControllerMode = le if you needed to
+ConnectionSupervisionTimeout=2000
+where iphone sets to this
 """
 import os
 import pty
