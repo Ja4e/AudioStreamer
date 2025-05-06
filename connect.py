@@ -36,6 +36,7 @@ Try connecting a single device and see if the quality improves or restart this s
 
 PLEASE DO GO https://github.com/thewierdnut/asha_pipewire_sink.git documentations BEFORE USE
 
+Required by SIG documentations:
 
 /etc/modprobe.d/bluetooth_asha.conf
 options bluetooth enable_ecred=1
@@ -52,13 +53,17 @@ MaxConnectionInterval=16
 ConnectionLatency=10
 ConnectionSupervisionTimeout=100
 
+I find setting from ConnectionSupervisionTimeout=100 to 2000 to be better in connections
+
 For people who has MEDEL's latest products it inbuilt low energy capabilities but not for audio streaming but rather for controlling and "find-my" app functionalities, and the audio stream adapter is for ble audio streaming capabilities
 but currently it does not work properly buecase My laptop has not managed to find them thus renders these passive advertising useless however I find pairing between two are more solid with it so its may or may not worthed it
 the latest updated program by a guy does proper active advertising connection between devices requires proper setup that requires you to uncomment in that /etc/bluetooth/main.conf command to Experimental = true
 but this isnt the case it causes problems which will report undocumented error: DBus.Error:org.bluez.Error.Failed: Operation failed with ATT error: 0x48 
-So for people who owns this device please do not enable this. 
+So for people who owns this device please do not enable this it will leads to problematic in reconnections.
 
 Enable 2M PHY (optional):
+Each devices may present different result during the handshake connection will implement a feature to execute them on the go making it more configurable through json
+
 # Check the existing phys
 sudo btmgmt phy
 Supported phys: BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT EDR3M1SLOT EDR3M3SLOT EDR3M5SLOT LE1MTX LE1MRX LE2MTX LE2MRX LECODEDTX LECODEDRX
@@ -72,9 +77,12 @@ sudo btmgmt phy BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT E
 #The latest three commits from that asha is currently very broken (Fixed)
 #try attempt running git reset --hard HEAD~1 in that commit before compiling 
 
-try set to ControllerMode = le if you needed to
-ConnectionSupervisionTimeout=2000
-where iphone sets to this
+Setcap is implemented for 1/2 phy protocols for convience 
+I chose 1mphy because of it's reliabilities during the streaming
+you could set when to use or not
+
+If it's connected sucessfully please do not unpair them because you got the security key to get connect them back, only unpair when your devices refused to connect them back multiple times and then try to attempt to repair them back. Usually for MEDEL's audiostream adapter requires the AudioKey 2 app on your mobile phone in the audiostream section to "update" them connect them back will give you higher chances to get it paired sucessfully usually sucess in one shot, one time, it somehow more reliable than having it your devices restarted multiple times to attempt it connect back.
+
 """
 import os
 import pty
@@ -98,6 +106,7 @@ import dbus.mainloop.glib
 from gi.repository import GLib
 import fcntl
 import termios
+
 
 colorama_init(autoreset=True)
 
@@ -132,6 +141,7 @@ reconnect_evt = threading.Event()
 asha_restart_evt = threading.Event()
 
 asha_handle: Optional[Tuple[int, int]] = None  # Tuple: (pid, master_fd)
+
 
 # ------------------------------
 # Logging Setup
@@ -469,7 +479,7 @@ class BluetoothAshaManager:
 		while not shutdown_evt.is_set() and attempts < 2:
 			try:
 				output = await asyncio.to_thread(run_command,
-												 f"bluetoothctl connect {mac_address}",
+												 f"bluetoothctl connect {mac_address}", # trying "pair" 
 												 capture_output=True)
 				if output and any(s in output for s in ["Connection successful", "already connected"]):
 					info_output = await asyncio.to_thread(run_command,
@@ -532,23 +542,26 @@ class BluetoothAshaManager:
 			run_command("cmake ..", cwd=BUILD_DIR)
 			run_command("make", cwd=BUILD_DIR)
 
-		# Check if cap_net_raw is already set
 		try:
+			# Check if cap_net_raw is already set
 			result = subprocess.run(["getcap", EXECUTABLE], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-			if "cap_net_raw+ep" not in result.stdout:
-				logger.info("Setting cap_net_raw+ep on ASHA sink executable...")
-				subprocess.run(["sudo", "setcap", "cap_net_raw+ep", EXECUTABLE], check=True)
+			
+			if f"{EXECUTABLE} cap_net_raw=ep" not in result.stdout.strip():
+				logger.info("Setting cap_net_raw=ep on ASHA sink executable...")
+				# Recommend preconfiguring sudoers to allow passwordless execution of setcap
+				subprocess.run(["sudo", "/usr/sbin/setcap", "cap_net_raw=ep", EXECUTABLE], check=True)
 			else:
-				logger.info("ASHA sink already has cap_net_raw+ep.")
+				logger.info("ASHA sink already has cap_net_raw=ep.")
 		except subprocess.CalledProcessError as e:
 			logger.error(f"Failed to set/get capabilities: {e}")
+			# sys.exit(1)
 
 		logger.info("Starting ASHA sink...")
 		master_fd, slave_fd = pty.openpty()
 		# Launch the ASHA sink wrapped in stdbuf to force line buffering.
 		try:
 			proc = subprocess.Popen(
-				["stdbuf", "-oL", EXECUTABLE, "--buffer_algorithm", "threaded", "--phy1m"], #can be changed to --phy2m
+				["stdbuf", "-oL", EXECUTABLE, "--buffer_algorithm", "threaded", "--phy2m"], #can be changed to --phy1m
 				preexec_fn=os.setsid,
 				stdin=slave_fd,
 				stdout=slave_fd,
@@ -804,6 +817,7 @@ exit
 		"""
 		signal.signal(signal.SIGINT, self.signal_handler)
 		signal.signal(signal.SIGTERM, self.signal_handler)
+		signal.signal(signal.SIGHUP, self.signal_handler)
 		try:
 			self.initialize_bluetooth()
 			self.start_advertising(self.args.disable_advertisement)
