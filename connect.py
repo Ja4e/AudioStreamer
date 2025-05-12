@@ -57,7 +57,7 @@ I find setting from ConnectionSupervisionTimeout=100 to 2000 to be better in con
 
 My personal config:
 DiscoverableTimeout = 0
-ControllerMode = le
+ControllerMode = le #This might not even be necessary just igore this if you actually wanted to use this
 FastConnectable = true
 
 KernelExperimental = true
