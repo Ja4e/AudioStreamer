@@ -55,6 +55,20 @@ ConnectionSupervisionTimeout=100
 
 I find setting from ConnectionSupervisionTimeout=100 to 2000 to be better in connections
 
+My personal config:
+DiscoverableTimeout = 0
+ControllerMode = le
+FastConnectable = true
+
+KernelExperimental = true
+ReconnectIntervals=1,1,2,3,5,8,13,21,34,55 # under policy section
+
+these may not suitable for all so just ignore them
+
+dont turn on if you have this particular MEDEL product:
+Experimental = true
+
+
 For people who has MEDEL's latest products it inbuilt low energy capabilities but not for audio streaming but rather for controlling and "find-my" app functionalities, and the audio stream adapter is for ble audio streaming capabilities
 but currently it does not work properly buecase My laptop has not managed to find them thus renders these passive advertising useless however I find pairing between two are more solid with it so its may or may not worthed it
 the latest updated program by a guy does proper active advertising connection between devices requires proper setup that requires you to uncomment in that /etc/bluetooth/main.conf command to Experimental = true
@@ -82,6 +96,9 @@ I chose 1mphy because of it's reliabilities during the streaming
 you could set when to use or not
 
 If it's connected sucessfully please do not unpair them because you got the security key to get connect them back, only unpair when your devices refused to connect them back multiple times and then try to attempt to repair them back. Usually for MEDEL's audiostream adapter requires the AudioKey 2 app on your mobile phone in the audiostream section to "update" them connect them back will give you higher chances to get it paired sucessfully usually sucess in one shot, one time, it somehow more reliable than having it your devices restarted multiple times to attempt it connect back.
+
+Usually, if connection return try to restart this device and try to rerun the script. 
+
 
 """
 import os
@@ -124,8 +141,9 @@ EXECUTABLE: str = os.path.join(BUILD_DIR, "asha_pipewire_sink")
 GATT_ATTRIBUTE: str = "00e4ca9e-ab14-41e4-8823-f9e70c7e91df" # update this if different devices can be changed to none if you dont want it 
 VOLUME_VALUE: str = "0xff"  # Adjust volume value (0-255 range) 0xf0 represents it as 240 Currently its at 255 but varies on different devices
 RETRY_DELAY: float = random.uniform(0.4, 1.0)
-DEFAULT_RETRY_INTERVAL: float = random.uniform(0.4, 1.0)
-DEFAULT_DELAY_AFTER_CONNECT: float = random.uniform(0.4, 1.0) # leave it like this 
+#DEFAULT_RETRY_INTERVAL: float = random.uniform(0.4, 1.0)
+DEFAULT_RETRY_INTERVAL: float = 0.0
+# DEFAULT_DELAY_AFTER_CONNECT: float = random.uniform(0.4, 1.0) # leave it like this 
 MAX_TIMEOUT: float = random.uniform(600, 1200) # uniform timeouts to keep the connection stable and you could set it to static if you wanted to, but i find this better, just in case you need em'
 BLACKLIST: List[str] = ["AudioStream Adapter DFU"]  # Blacklist devices to avoid interfering with successful connections.
 
@@ -138,6 +156,7 @@ global_connected_list: List[Tuple[str, str]] = []  # (mac, device_name)
 # Threading & process events
 shutdown_evt = threading.Event()
 reconnect_evt = threading.Event()
+reset_evt = threading.Event()
 asha_restart_evt = threading.Event()
 
 asha_handle: Optional[Tuple[int, int]] = None  # Tuple: (pid, master_fd)
@@ -350,6 +369,11 @@ class BluetoothAshaManager:
 
 		except Exception as e:
 			logger.error(f"{Fore.RED}Advertising setup failed: {e}{Style.RESET_ALL}")
+			if reconnect_evt.is_set():
+				logger.info("Reconnect triggered, restarting the script...")
+				reconnect_evt.clear()
+				self.cleanup()
+				os.execv(sys.executable, [sys.executable] + sys.argv)
 
 	def stop_advertising(self, disable_advertisement: bool = False) -> None:
 		"""
@@ -491,6 +515,9 @@ class BluetoothAshaManager:
 				await asyncio.sleep(DEFAULT_RETRY_INTERVAL)
 			except Exception as e:
 				logger.error(f"Connection attempt failed: {e}")
+				if attempts == 0 and self.args.reset_on_failure:
+					logger.warning("First connection attempt failed — scheduling adapter reset")
+					reset_evt.set()
 				attempts += 1
 				await asyncio.sleep(DEFAULT_RETRY_INTERVAL * 2)
 		return False
@@ -552,6 +579,7 @@ class BluetoothAshaManager:
 				subprocess.run(["sudo", "/usr/sbin/setcap", "cap_net_raw=ep", EXECUTABLE], check=True)
 			else:
 				logger.info("ASHA sink already has cap_net_raw=ep.")
+				
 		except subprocess.CalledProcessError as e:
 			logger.error(f"Failed to set/get capabilities: {e}")
 			# sys.exit(1)
@@ -669,6 +697,7 @@ class BluetoothAshaManager:
 						]):
 							logger.warning("ASHA connection dropped")
 							self.gatt_triggered = False
+								
 							if self.args.reconnect:
 								with connected_list_lock:
 									global_connected_list.clear()
@@ -861,6 +890,12 @@ exit
 								daemon=True
 							).start()
 
+				if reset_evt.is_set():
+					logger.info("Controller resetting...")
+					reset_evt.clear()
+					self.cleanup()
+					os.execv(sys.executable, [sys.executable] + sys.argv)
+
 				if reconnect_evt.is_set():
 					logger.info("Reconnect triggered, restarting the script...")
 					reconnect_evt.clear()
@@ -889,6 +924,8 @@ def main() -> None:
 						help='Enable persistent pairing mode')
 	parser.add_argument('-da', '--disable-advertisement', action='store_true',
 						help='Disable Bluetooth LE advertising')
+	parser.add_argument('-rof','--reset-on-failure', action='store_true', 
+						help='Auto-reset adapter on ASHA connect failure')
 	args = parser.parse_args()
 
 	manager = BluetoothAshaManager(args)
