@@ -694,6 +694,7 @@ class BluetoothAshaManager:
 							"GDBus.Error:org.freedesktop.DBus.Error.NoReply: Remote peer disconnected",
 							"Timeout was reached",
 							"GDBus.Error:org.bluez.Error.Failed: Not connected",
+							"Removing Sink",
 						]):
 							logger.warning("ASHA connection dropped")
 							self.gatt_triggered = False
