@@ -10,3 +10,5 @@ if debug try use
 DEBUG=1 python connect2.py -d -r -rof
 
 append DEBUG=1 to set the env  to output
+
+sucess rate connecting to that audiostream adapter is now 100% sometimes its scary 
