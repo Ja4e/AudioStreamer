@@ -13,6 +13,8 @@ append DEBUG=1 to set the env  to output
 
 sucess rate connecting to that audiostream adapter is now 100% sometimes its scary 
 
+i might want to add timer so it will repeatly request for initial handshake until sucessful
+
 If the audio is choppy, delayed, or sounds like it is shifting from ear to ear, then your adapter may not be able to keep up with the bandwidth requirements.
 Try connecting a single device and see if the quality improves or restart this script it usually fixes for me.
 
