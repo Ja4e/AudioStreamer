@@ -468,6 +468,7 @@ class BluetoothAshaManager:
 										args=(mac, name),
 										daemon=True
 									).start()
+
 					try:
 						proc.stdin.write("scan off\n")
 						proc.stdin.flush()
@@ -491,8 +492,14 @@ class BluetoothAshaManager:
 		try:
 			return await asyncio.wait_for(self._connect_attempt(mac_address), timeout=MAX_TIMEOUT)
 		except asyncio.TimeoutError:
-			run_remove_devices(mac_address)
+			run_remove_devices(mac_address) # just incase
+			if self.args.reset_on_failure:
+				logger.warning("Connection to %s timed out — reset-on-failure triggered", mac_address)
+				reset_evt.set()
+				self.cleanup()
+				os.execv(sys.executable, [sys.executable] + sys.argv)
 			return False
+
 
 	async def _connect_attempt(self, mac_address: str) -> bool:
 		if not re.match(r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$', mac_address):
@@ -528,7 +535,6 @@ class BluetoothAshaManager:
 						self.cleanup()
 					except Exception as e:
 						logger.error(f"Cleanup failed before restart: {e}")
-
 					os.execv(sys.executable, [sys.executable] + sys.argv)
 
 			attempts += 1
@@ -563,6 +569,11 @@ class BluetoothAshaManager:
 					run_trust_background(mac)
 					disable_pairable_background()
 		else:
+			if self.args.reset_on_failure:
+				logger.warning("Failed to connect to %s — reset-on-failure triggered", mac)
+				reset_evt.set()
+				self.cleanup()
+				os.execv(sys.executable, [sys.executable] + sys.argv)
 			with processed_lock:
 				processed_devices.discard(mac)
 
