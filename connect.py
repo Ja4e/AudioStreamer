@@ -495,10 +495,6 @@ class BluetoothAshaManager:
 			return False
 
 	async def _connect_attempt(self, mac_address: str) -> bool:
-		"""
-		Try up to two bluetoothctl connect attempts.
-		On any failure or exception, if --reset-on-failure is set, perform adapter reset immediately.
-		"""
 		if not re.match(r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$', mac_address):
 			logger.debug(f"Invalid MAC address in connection attempt: {mac_address}")
 			return False
@@ -512,7 +508,6 @@ class BluetoothAshaManager:
 					capture_output=True
 				)
 
-				# success cases
 				if output and any(s in output for s in ["Connection successful", "already connected"]):
 					info = await asyncio.to_thread(
 						run_command,
@@ -522,24 +517,24 @@ class BluetoothAshaManager:
 					if info and "Connected: yes" in info:
 						return True
 
-				# explicit failure of this attempt
 				logger.warning(f"Connect attempt {attempts + 1} failed")
-				if self.args.reset_on_failure:
-					logger.warning("Failure detected — performing immediate adapter reset")
-					self.cleanup()
-					os.execv(sys.executable, [sys.executable] + sys.argv)
 
 			except Exception as e:
 				logger.error(f"Connection attempt exception: {e}")
-				if self.args.reset_on_failure:
-					logger.warning("Exception detected — performing immediate adapter reset")
-					self.cleanup()
+				if self.args.reset_on_failure and not shutdown_evt.is_set():
+					logger.warning("All connection attempts failed — restarting via os.execv()")
+					try:
+						self.cleanup()
+					except Exception as e:
+						logger.error(f"Cleanup failed before restart: {e}")
+
 					os.execv(sys.executable, [sys.executable] + sys.argv)
-					
+
 			attempts += 1
 			await asyncio.sleep(DEFAULT_RETRY_INTERVAL)
 
 		return False
+
 
 	def handle_new_device(self, mac: str, name: str) -> None:
 		"""
@@ -734,7 +729,8 @@ class BluetoothAshaManager:
 								for mac, name in global_connected_list:
 									logger.info(f"Triggering GATT operations on {name}...")
 									for _ in range(3):
-										time.sleep(0.2)
+									# for _ in range(2):
+										# time.sleep(0.2) # uhm might change that but ok just incase 
 										self.perform_gatt_operations(mac, name)
 			except Exception as e:
 				if not shutdown_evt.is_set():
