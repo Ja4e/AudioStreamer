@@ -523,6 +523,7 @@ class BluetoothAshaManager:
 				logger.error(f"Connection attempt exception: {e}")
 				if self.args.reset_on_failure and not shutdown_evt.is_set():
 					logger.warning("All connection attempts failed — restarting via os.execv()")
+					reset_evt.set()  # Signal main loop to handle reset
 					try:
 						self.cleanup()
 					except Exception as e:
@@ -730,11 +731,12 @@ class BluetoothAshaManager:
 									logger.info(f"Triggering GATT operations on {name}...")
 									for _ in range(3):
 									# for _ in range(2):
-										# time.sleep(0.2) # uhm might change that but ok just incase 
+										time.sleep(0.2) # uhm might change that but ok just incase 
 										self.perform_gatt_operations(mac, name)
 			except Exception as e:
 				if not shutdown_evt.is_set():
 					logger.error(f"ASHA stream error: {e}")
+					#reset_evt.set()  # Trigger reset on critical ASHA failure May needed
 				break
 
 
