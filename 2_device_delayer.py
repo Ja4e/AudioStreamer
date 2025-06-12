@@ -20,6 +20,12 @@ DESC3 = "Combined_Sink"
 TARGET1 = os.environ.get('ASHA_SINK', 'asha_16450405641617933895') #Please change this to your asha 
 TARGET2 = os.environ.get('BT_SINK', 'bluez_output.#x#x#X#') #Please change this as well 
 
+'''
+WARNING!
+DO NOT USE EASYEFFECT WITH THIS IT WILL BREAK
+I will try to make it better
+'''
+
 # === PARSE ARGS ===
 parser = argparse.ArgumentParser(description='Combine ASHA and BT PulseAudio sinks')
 parser.add_argument('chan1', nargs='?', default='both', choices=['left', 'right', 'both'])
