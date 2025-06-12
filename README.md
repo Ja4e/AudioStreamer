@@ -74,3 +74,18 @@ Selected phys: BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT ED
 copy the Selected phys, and add the new LE2MTX LE2MRX values to it
 
 sudo btmgmt phy BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT EDR3M1SLOT EDR3M3SLOT EDR3M5SLOT LE1MTX LE1MRX LE2MTX LE2MRX
+
+
+Currently theres a stupid bug where:
+14:01:47 INFO: Starting ASHA sink...
+14:01:47 DEBUG: [ASHA] ** INFO: 14:01:47.059: Starting...
+14:01:47 DEBUG: [ASHA] ** INFO: 14:01:47.067: <-- monitor_manager.RegisterMonitor(/org/bluez/asha/monitor)
+14:01:47 DEBUG: [ASHA] ** INFO: 14:01:47.067: <-- Path::InterfacesAdded(/org/bluez/asha/monitor/monitor0 {})
+14:01:47 DEBUG: [ASHA] 
+14:01:47 DEBUG: [ASHA] ** (process:41838): WARNING **: 14:01:47.067: Error calling RegisterMonitor: GDBus.Error:org.freedesktop.DBus.Error.UnknownMethod: Method "RegisterMonitor" with signature "o" on interface "org.bluez.AdvertisementMonitorManager1" doesn't exist
+14:01:47 DEBUG: [ASHA] 
+14:01:47 DEBUG: [ASHA] 
+14:01:47 DEBUG: [ASHA] ** (process:41838): WARNING **: 14:01:47.068: Null result when calling RegisterMonitor
+
+will hang something you will not liking it 
+so there will need to use import time to actually measure and kill it restart to work.
