@@ -18,7 +18,7 @@ DESC3 = "Combined_Sink"
 
 # Do use "pactl list short sources" in your pipewire machine to find out the name should be different across the devices
 TARGET1 = os.environ.get('ASHA_SINK', 'asha_16450405641617933895') #Please change this to your asha 
-TARGET2 = os.environ.get('BT_SINK', 'bluez_output.2C_53_D7_7B_47_2D.1') #Please change this as well
+TARGET2 = os.environ.get('BT_SINK', 'bluez_output.#x#x#X#') #Please change this as well 
 
 # === PARSE ARGS ===
 parser = argparse.ArgumentParser(description='Combine ASHA and BT PulseAudio sinks')
