@@ -77,15 +77,25 @@ sudo btmgmt phy BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT E
 
 
 Currently theres a stupid bug where:
+
 14:01:47 INFO: Starting ASHA sink...
+
 14:01:47 DEBUG: [ASHA] ** INFO: 14:01:47.059: Starting...
+
 14:01:47 DEBUG: [ASHA] ** INFO: 14:01:47.067: <-- monitor_manager.RegisterMonitor(/org/bluez/asha/monitor)
+
 14:01:47 DEBUG: [ASHA] ** INFO: 14:01:47.067: <-- Path::InterfacesAdded(/org/bluez/asha/monitor/monitor0 {})
+
 14:01:47 DEBUG: [ASHA] 
+
 14:01:47 DEBUG: [ASHA] ** (process:41838): WARNING **: 14:01:47.067: Error calling RegisterMonitor: GDBus.Error:org.freedesktop.DBus.Error.UnknownMethod: Method "RegisterMonitor" with signature "o" on interface "org.bluez.AdvertisementMonitorManager1" doesn't exist
+
 14:01:47 DEBUG: [ASHA] 
+
 14:01:47 DEBUG: [ASHA] 
+
 14:01:47 DEBUG: [ASHA] ** (process:41838): WARNING **: 14:01:47.068: Null result when calling RegisterMonitor
+
 
 will hang something you will not liking it 
 so there will need to use import time to actually measure and kill it restart to work.
