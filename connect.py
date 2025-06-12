@@ -132,7 +132,7 @@ colorama_init(autoreset=True)
 # ------------------------------
 DEBUG: bool = os.getenv('DEBUG', '0') == '1'
 
-PRIMARY_FILTER: str = "RTL's Hearing Device"   # Primary device name filter
+PRIMARY_FILTER: str = "JZ's Hearing Device"   # Primary device name filter
 SECONDARY_FILTER: str = "AudioStream Adapter"    # Secondary device name filter, add one if you needed Or just one devices rename it to none if required
 REPO_URL: str = "https://github.com/thewierdnut/asha_pipewire_sink.git"
 CLONE_DIR: str = os.path.expanduser("~/asha_pipewire_sink")
@@ -141,9 +141,9 @@ EXECUTABLE: str = os.path.join(BUILD_DIR, "asha_pipewire_sink")
 GATT_ATTRIBUTE: str = "00e4ca9e-ab14-41e4-8823-f9e70c7e91df" # update this if different devices can be changed to none if you dont want it 
 VOLUME_VALUE: str = "0xff"  # Adjust volume value (0-255 range) 0xf0 represents it as 240 Currently its at 255 but varies on different devices
 RETRY_DELAY: float = random.uniform(0.4, 1.0)
-DEFAULT_RETRY_INTERVAL: float = random.uniform(0.4, 1.0)
-#DEFAULT_RETRY_INTERVAL: float = 0.0
-#	 DEFAULT_DELAY_AFTER_CONNECT: float = random.uniform(0.4, 1.0) # leave it like this 
+#DEFAULT_RETRY_INTERVAL: float = random.uniform(0.4, 1.0)
+DEFAULT_RETRY_INTERVAL: float = 0.0
+# DEFAULT_DELAY_AFTER_CONNECT: float = random.uniform(0.4, 1.0) # leave it like this 
 MAX_TIMEOUT: float = random.uniform(600, 1200) # uniform timeouts to keep the connection stable and you could set it to static if you wanted to, but i find this better, just in case you need em'
 BLACKLIST: List[str] = ["AudioStream Adapter DFU"]  # Blacklist devices to avoid interfering with successful connections.
 
@@ -304,6 +304,7 @@ class BluetoothAshaManager:
 		self.adv_thread = None
 		self.scan_thread: Optional[threading.Thread] = None
 		self.gatt_triggered: bool = False  # Instance flag for GATT trigger
+		self.timer: bool = False # Introduced Timer to fix the stupid bugs
 		self.ad_registered: bool = False   # Track advertisement registration status
 
 	# Bluetooth Initialization
@@ -507,47 +508,35 @@ class BluetoothAshaManager:
 			return False
 
 		attempts = 0
-		try:
-			while not shutdown_evt.is_set() and attempts < 2:
-				try:
-					output = await asyncio.to_thread(
+		while not shutdown_evt.is_set() and attempts < 2:
+			try:
+				output = await asyncio.to_thread(
+					run_command,
+					f"bluetoothctl connect {mac_address}",
+					capture_output=True
+				)
+
+				if output and any(s in output for s in ["Connection successful", "already connected"]):
+					info = await asyncio.to_thread(
 						run_command,
-						f"bluetoothctl connect {mac_address}",
+						f"bluetoothctl info {mac_address}",
 						capture_output=True
 					)
+					if info and "Connected: yes" in info:
+						return True
 
-					if output and any(s in output for s in ["Connection successful", "already connected"]):
-						info = await asyncio.to_thread(
-							run_command,
-							f"bluetoothctl info {mac_address}",
-							capture_output=True
-						)
-						if info and "Connected: yes" in info:
-							return True
+				logger.warning(f"Connect attempt {attempts + 1} failed")
 
-					logger.warning(f"Connect attempt {attempts + 1} failed")
-					if self.args.reset_on_failure and not shutdown_evt.is_set():
-						break
-				
-				except Exception as e:
-					logger.error(f"Connection attempt exception: {e}")
-					if self.args.reset_on_failure and not shutdown_evt.is_set():
-						logger.warning("All connection attempts failed — restarting via os.execv()")
-						reset_evt.set()  # Signal main loop to handle reset
+			except Exception as e:
+				logger.error(f"Connection attempt exception: {e}")
+				if self.args.reset_on_failure and not shutdown_evt.is_set():
+					logger.warning("All connection attempts failed — restarting via os.execv()")
+					reset_evt.set()  # Signal main loop to handle reset
+					try:
 						self.cleanup()
+					except Exception as e:
 						logger.error(f"Cleanup failed before restart: {e}")
-						os.execv(sys.executable, [sys.executable] + sys.argv)
-						return False
-
-		except Exception as e:
-			logger.error(f"Connection attempt exception: {e}")
-			if self.args.reset_on_failure and not shutdown_evt.is_set():
-				logger.warning("All connection attempts failed — restarting via os.execv()")
-				reset_evt.set()  # Signal main loop to handle reset
-				self.cleanup()
-				logger.error(f"Cleanup failed before restart: {e}")
-				os.execv(sys.executable, [sys.executable] + sys.argv)
-				return False
+					os.execv(sys.executable, [sys.executable] + sys.argv)
 
 			attempts += 1
 			await asyncio.sleep(DEFAULT_RETRY_INTERVAL)
@@ -571,7 +560,6 @@ class BluetoothAshaManager:
 
 		logger.info(f"{Fore.BLUE}New device detected: {name} ({mac}){Style.RESET_ALL}")
 		success = asyncio.run(self.async_connect_specific(mac))
-		# try:
 		if success:
 			with connected_list_lock:
 				if not any(m == mac for m, _ in global_connected_list):
@@ -589,10 +577,6 @@ class BluetoothAshaManager:
 				os.execv(sys.executable, [sys.executable] + sys.argv)
 			with processed_lock:
 				processed_devices.discard(mac)
-		# except KeyboardInterrupt:
-			# logger.warning("Interrupted during connect -- aborting")
-			# shutdown_evt.set()
-			# return
 
 	# ASHA Sink Management
 
@@ -664,6 +648,8 @@ class BluetoothAshaManager:
 			r"(?:\s+Rssi:\s*(\d+),\s*(\d+))?"
 		)
 
+		current_time = 0
+		
 		while not shutdown_evt.is_set():
 			try:
 				rlist, _, _ = select.select([master_fd], [], [], 0.1)
@@ -749,6 +735,30 @@ class BluetoothAshaManager:
 								asha_restart_evt.set()
 							return
 
+						if any(phrase in decoded for phrase in [
+							"Connection Ready Callback Set"
+						]):
+							current_time = time.perf_counter()
+							logger.debug(f"Countdown started {current_time}")
+							self.timer = True
+							
+						if current_time >= 1000000: # change this value I might also try to set this value
+							logger.warning("ASHA connection dropped")
+							self.gett_triggered = False
+							
+							if self.args.reconnect:
+								with connected_list_lock:
+									global_connected_list.clear()
+								reconnect_evt.set()
+								asha_restart_evt.set()
+							return
+							
+						if any(phrase in decoded for phrase in [
+							"Properties read callback"
+						]):
+							logger.debug(f"Counterdown stopped {current_time}")
+							self.timer = False
+							
 						if ("on_change_state" in decoded and
 								("new: PAUSED" in decoded or "new: STREAMING" in decoded) and
 								not self.gatt_triggered and not self.args.clean_state):
@@ -757,9 +767,10 @@ class BluetoothAshaManager:
 							with connected_list_lock:
 								for mac, name in global_connected_list:
 									logger.info(f"Triggering GATT operations on {name}...")
-									for _ in range(2):
+									#self.perform_gatt_operations(mac, name)
+									for _ in range(3): # once is enough but this is made for precaution 
 									# for _ in range(2):
-										time.sleep(0.2) # uhm might change that but ok just incase very necessary this part
+										time.sleep(0.2) # uhm might change that but ok just incase, it has to be 0
 										self.perform_gatt_operations(mac, name)
 			except Exception as e:
 				if not shutdown_evt.is_set():
@@ -882,7 +893,6 @@ exit
 		Handle signals for graceful shutdown.
 		"""
 		logger.warning(f"Received signal {sig}, shutting down...")
-		shutdown_evt.set()
 		self.cleanup()
 		sys.exit(0)
 
@@ -891,9 +901,6 @@ exit
 		"""
 		Main loop to initialize Bluetooth, start scanning, monitor devices, and manage the ASHA sink.
 		"""
-		signal.signal(signal.SIGINT, signal.SIG_DFL)
-		signal.signal(signal.SIGTERM, signal.SIG_DFL)
-		
 		signal.signal(signal.SIGINT, self.signal_handler)
 		signal.signal(signal.SIGTERM, self.signal_handler)
 		signal.signal(signal.SIGHUP, self.signal_handler)
@@ -943,7 +950,6 @@ exit
 				if reset_evt.is_set():
 					logger.info("Controller resetting...")
 					reset_evt.clear()
-					shutdown_evt.set()
 					self.cleanup()
 					os.execv(sys.executable, [sys.executable] + sys.argv)
 
@@ -954,8 +960,6 @@ exit
 					os.execv(sys.executable, [sys.executable] + sys.argv)
 
 				time.sleep(1)
-		except KeyboardInterrupt:
-			logger.warning("KeyboardInterrupt caught — shutting down now.")
 		except Exception as e:
 			logger.critical(f"Fatal error: {e}", exc_info=True)
 		finally:
