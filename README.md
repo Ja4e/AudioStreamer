@@ -77,3 +77,5 @@ sudo btmgmt phy BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT E
 
 
 THESE SCRIPT ARE USUALLY NOT REALLY READY MADE PLEASE DO READ THE COMMENTS IN THE CODE USUALLY STARTS FROM TOP SECTIONS AND RARELY BOTTOM PART
+
+I think I should move the configuration into separate Json file so everything theres an update you do not need to worry to modify the file
