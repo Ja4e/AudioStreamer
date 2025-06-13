@@ -146,6 +146,8 @@ DEFAULT_RETRY_INTERVAL: float = 0.0
 # DEFAULT_DELAY_AFTER_CONNECT: float = random.uniform(0.4, 1.0) # leave it like this 
 MAX_TIMEOUT: float = random.uniform(600, 1200) # uniform timeouts to keep the connection stable and you could set it to static if you wanted to, but i find this better, just in case you need em'
 BLACKLIST: List[str] = ["AudioStream Adapter DFU"]  # Blacklist devices to avoid interfering with successful connections.
+Timeout_qs: float = random.uniform(1000000,1200000) # mm just funnsies
+
 
 # Global state (protected by locks where needed)
 processed_devices: Set[str] = set()
@@ -741,8 +743,8 @@ class BluetoothAshaManager:
 							current_time = time.perf_counter()
 							logger.debug(f"Countdown started {current_time}")
 							self.timer = True
-							
-						if current_time >= 1000000: # change this value I might also try to set this value
+						
+						if current_time >= Timeout_qs:
 							logger.warning("ASHA connection dropped")
 							self.gett_triggered = False
 							
