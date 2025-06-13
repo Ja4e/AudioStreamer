@@ -132,7 +132,7 @@ colorama_init(autoreset=True)
 # ------------------------------
 DEBUG: bool = os.getenv('DEBUG', '0') == '1'
 
-PRIMARY_FILTER: str = "JZ's Hearing Device"   # Primary device name filter
+PRIMARY_FILTER: str = "RTL's Hearing Device"   # Primary device name filter
 SECONDARY_FILTER: str = "AudioStream Adapter"    # Secondary device name filter, add one if you needed Or just one devices rename it to none if required
 REPO_URL: str = "https://github.com/thewierdnut/asha_pipewire_sink.git"
 CLONE_DIR: str = os.path.expanduser("~/asha_pipewire_sink")
@@ -746,6 +746,7 @@ class BluetoothAshaManager:
 						
 						if current_time >= Timeout_qs:
 							logger.warning("ASHA connection dropped")
+							self.timer = False
 							self.gett_triggered = False
 							
 							if self.args.reconnect:
