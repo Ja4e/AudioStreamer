@@ -1,5 +1,5 @@
 # AudioStreamer
-Script for streaming ASHA hearing aids
+Program for streaming ASHA hearing aids
 
 Supports other ASHA devices for volume control with provided bash script (volume.sh)
 
@@ -16,7 +16,7 @@ sucess rate connecting to that audiostream adapter is now 100% sometimes its sca
 i might want to add timer so it will repeatly request for initial handshake until sucessful
 
 If the audio is choppy, delayed, or sounds like it is shifting from ear to ear, then your adapter may not be able to keep up with the bandwidth requirements.
-Try connecting a single device and see if the quality improves or restart this script it usually fixes for me.
+Try connecting a single device and see if the quality improves or restart this program it usually fixes for me.
 
 
 PLEASE DO GO https://github.com/thewierdnut/asha_pipewire_sink.git documentations BEFORE USE
@@ -76,6 +76,9 @@ copy the Selected phys, and add the new LE2MTX LE2MRX values to it
 sudo btmgmt phy BR1M1SLOT BR1M3SLOT BR1M5SLOT EDR2M1SLOT EDR2M3SLOT EDR2M5SLOT EDR3M1SLOT EDR3M3SLOT EDR3M5SLOT LE1MTX LE1MRX LE2MTX LE2MRX
 
 
-THESE SCRIPT ARE USUALLY NOT REALLY READY MADE PLEASE DO READ THE COMMENTS IN THE CODE USUALLY STARTS FROM TOP SECTIONS AND RARELY BOTTOM PART
+THESE program ARE USUALLY NOT REALLY READY MADE PLEASE DO READ THE COMMENTS IN THE CODE USUALLY STARTS FROM TOP SECTIONS AND RARELY BOTTOM PART
 
-I think I should move the configuration into separate Json file so everything theres an update you do not need to worry to modify the file
+Your configuration is now saved at if it starts from the first time
+please do configure them:
+
+# ~/.config/asha_manager/config.json
