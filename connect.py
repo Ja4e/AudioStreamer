@@ -101,6 +101,10 @@ Usually, if connection return try to restart this device and try to rerun the sc
 
 
 """
+
+"""
+This script aims to assist all annonying G.722 bluetooth connection issues 
+"""
 import os
 import pty
 import subprocess
@@ -123,30 +127,148 @@ import dbus.mainloop.glib
 from gi.repository import GLib
 import fcntl
 import termios
-
+import json
 
 colorama_init(autoreset=True)
 
 # ------------------------------
-# CONFIGURATION
+# Logging Setup
 # ------------------------------
 DEBUG: bool = os.getenv('DEBUG', '0') == '1'
+LOG_FORMAT = f"%(asctime)s {Fore.CYAN}[DEBUG] %(message)s{Style.RESET_ALL}" if DEBUG else "%(asctime)s [INFO] %(message)s"
+logging.basicConfig(level=logging.DEBUG if DEBUG else logging.INFO,
+					format=LOG_FORMAT,
+					datefmt="%H:%M:%S")
+logger = logging.getLogger(__name__)
 
-PRIMARY_FILTER: str = "RTL's Hearing Device"   # Primary device name filter
-SECONDARY_FILTER: str = "AudioStream Adapter"    # Secondary device name filter, add one if you needed Or just one devices rename it to none if required
+# ------------------------------
+# CONFIGURATION
+# ------------------------------
+config_path = "~/.config/asha_manager/config.json" # This is the config_path you will have them implemented
+
+def load_config(config_path: str) -> dict:
+	"""
+	Load configuration from JSON file, merging defaults with user overrides.
+	If file does not exist or is invalid, create/write it with default settings.
+	"""
+
+	def get_default_config() -> dict:
+		return {
+			"Devices": {
+				"Primary": {
+					"Name": ""
+				},
+				"Secondary": {
+					"Name": ""
+				},
+			},
+			
+			"global": {
+				"Separate_boolean": True, # Leave this alone Not implemented yet
+				"Filter_DFU": True, # Not Implemented feature yet But this is the feature you will want
+			},
+			
+			"GATT": {
+				"Volume": {
+					"ID": "00e4ca9e-ab14-41e4-8823-f9e70c7e91df", # Change it if needed
+					"Value": "0xff",
+				},
+				"Trigger": { # Only select one
+					"Boolean": True, # Not implemented yet ignore this part 
+					"Modes": "increment", # Very pratical very Recommended it acts like delay = (Duration + Frequency_int) i a loop  or "Burst", The burst functionalities is very periodic no irregularities very useful However it will cause stupid unecessary bandwidth bluetooth LE filling up causing problematic control bandwidth flow. 
+					# I might add extras theres.
+					"Duration_s": 0.3, # have to up to 0.2 lower than 0.2 will fail in transmitting  0.3 is recommended for stable audio transmitting
+				},
+				"Frequency_int": 2, # tring 2 call is enough
+			},
+			
+			"DELAY": { # Please ignore these part 
+				"RETRY": "R",
+				"DEFAULT_RETRY": 0.0,
+				"MAX_TIMEOUT": "R",
+				"Timeout_qs": "R",
+			},
+			
+			"Blacklist": [
+				"AudioStream Adapter DFU",
+				# Add anything you needed
+			],
+		}
+
+	def deep_merge(default: dict, override: dict) -> None:
+		for key, value in override.items():
+			if key in default and isinstance(default[key], dict) and isinstance(value, dict):
+				deep_merge(default[key], value)
+			else:
+				default[key] = value
+
+	default_config = get_default_config()
+
+	# Ensure the config directory exists
+	os.makedirs(os.path.dirname(config_path), exist_ok=True)
+
+	if os.path.isfile(config_path):
+		try:
+			with open(config_path, 'r') as f:
+				user_config = json.load(f)
+			deep_merge(default_config, user_config)
+		except (json.JSONDecodeError, IOError) as e:
+			logging.warning(f"[config] Failed to load config, using defaults: {e}")
+	else:
+		try:
+			with open(config_path, 'w') as f:
+				json.dump(default_config, f, indent=4)
+			logging.info(f"[config] Created default config at: {config_path}") # Will be logged if first time
+		except IOError as e:
+			logging.error(f"[config] Failed to write default config: {e}")
+
+	return default_config
+
+# Path to configuration file
+CONFIG_PATH = os.path.expanduser(config_path)
+config = load_config(CONFIG_PATH)
+
+"""
+DEVICES
+"""
+
+# Extract filters and options
+PRIMARY_FILTER: str = config["Devices"]["Primary"]["Name"] or "JZ's Hearing Device" # Fallback mechanism
+SECONDARY_FILTER: str = config["Devices"]["Secondary"]["Name"] or "AudioStream Adapter" # Fallback mechanism
+if not PRIMARY_FILTER or not SECONDARY_FILTER:
+    raise RuntimeError("Error: No device name either one of them must be specified in config.")
+
+"""
+GATT
+"""
+
+GATT_ATTRIBUTE: str = config["GATT"]["Volume"]["ID"] or "00e4ca9e-ab14-41e4-8823-f9e70c7e91df"
+VOLUME_VALUE: str = config["GATT"]["Volume"]["Value"] or "0xff"
+
+"""
+Global
+"""
+SEPARATE_BOOLEAN = config["global"].get("Separate_boolean", False) # Not yet implemented
+Filter_DFU = config["global"].get("Filter_DFU", False)
+
+# ASHA sink repository settings
 REPO_URL: str = "https://github.com/thewierdnut/asha_pipewire_sink.git"
 CLONE_DIR: str = os.path.expanduser("~/asha_pipewire_sink")
 BUILD_DIR: str = os.path.join(CLONE_DIR, "build")
 EXECUTABLE: str = os.path.join(BUILD_DIR, "asha_pipewire_sink")
-GATT_ATTRIBUTE: str = "00e4ca9e-ab14-41e4-8823-f9e70c7e91df" # update this if different devices can be changed to none if you dont want it 
-VOLUME_VALUE: str = "0xff"  # Adjust volume value (0-255 range) 0xf0 represents it as 240 Currently its at 255 but varies on different devices
+
+
+"""
+Randomized timing settings can be fixed
+"""
+# Randomized timing settings
 RETRY_DELAY: float = random.uniform(0.4, 1.0)
-#DEFAULT_RETRY_INTERVAL: float = random.uniform(0.4, 1.0)
 DEFAULT_RETRY_INTERVAL: float = 0.0
-# DEFAULT_DELAY_AFTER_CONNECT: float = random.uniform(0.4, 1.0) # leave it like this 
-MAX_TIMEOUT: float = random.uniform(600, 1200) # uniform timeouts to keep the connection stable and you could set it to static if you wanted to, but i find this better, just in case you need em'
-BLACKLIST: List[str] = ["AudioStream Adapter DFU"]  # Blacklist devices to avoid interfering with successful connections.
-Timeout_qs: float = random.uniform(1000000,1200000) # mm just funnsies
+MAX_TIMEOUT: float = random.uniform(600, 1200)
+Timeout_qs: float = random.uniform(100000, 120000)
+
+# Blacklist devices to avoid
+BLACKLIST: list = config.get("Blacklist", []) # I may want to set a boolean switch to filter all devices that has "DFU" names because thats not the devices you wanted to connect
 
 
 # Global state (protected by locks where needed)
@@ -162,18 +284,6 @@ reset_evt = threading.Event()
 asha_restart_evt = threading.Event()
 
 asha_handle: Optional[Tuple[int, int]] = None  # Tuple: (pid, master_fd)
-
-
-# ------------------------------
-# Logging Setup
-# ------------------------------
-LOG_FORMAT = f"%(asctime)s {Fore.CYAN}[DEBUG]%(message)s{Style.RESET_ALL}" if DEBUG else "%(asctime)s [INFO] %(message)s"
-logging.basicConfig(
-	level=logging.DEBUG if DEBUG else logging.INFO,
-	format="%(asctime)s %(levelname)s: %(message)s",
-	datefmt="%H:%M:%S"
-)
-logger = logging.getLogger(__name__)
 
 
 # ------------------------------
@@ -771,14 +881,36 @@ class BluetoothAshaManager:
 								for mac, name in global_connected_list:
 									logger.info(f"Triggering GATT operations on {name}...")
 									#self.perform_gatt_operations(mac, name)
-									for _ in range(3): # once is enough but this is made for precaution 
-									# for _ in range(2):
-										time.sleep(0.2) # uhm might change that but ok just incase, it has to be 0
-										self.perform_gatt_operations(mac, name)
+									# for _ in range(3): # once is enough but this is made for precaution 
+									# # for _ in range(2):
+										# time.sleep(0.2) # uhm might change that but ok just incase, it has to be 0
+										# self.perform_gatt_operations(mac, name)
+									
+									mode: str = config["GATT"]["Trigger"] or "increment"
+									duration: int = mode["Duration_s"] or 0.2
+									if duration < 0.2:
+										logger.warn("first trigger will fail")
+									
+									frequency: int = config["GATT"]["Frequency_int"] or 3
+									
+									if mode == "burst":
+										for _ in range(frequency):
+											time.sleep(duration)
+											self.perform_gatt_operations(mac, name)
+									elif mode == "increment":
+										for i in range(1, frequency+1):
+											delay = duration * i
+											time.sleep(delay)
+											self.perform_gatt_operations(mac, name)
+									else:  # periodic
+										for _ in range(frequency):
+											time.sleep(duration)
+											self.perform_gatt_operations(mac, name)
+
 			except Exception as e:
 				if not shutdown_evt.is_set():
 					logger.error(f"ASHA stream error: {e}")
-					#reset_evt.set()  # Trigger reset on critical ASHA failure May needed
+					reset_evt.set()  # Trigger reset on critical ASHA failure May needed
 				break
 
 
