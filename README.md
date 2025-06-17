@@ -82,3 +82,8 @@ Your configuration is now saved at if it starts from the first time
 please do configure them:
 
 # ~/.config/asha_manager/config.json
+
+
+
+
+README file need to be revamped for better readability
