@@ -179,7 +179,7 @@ def load_config(config_path: str) -> dict:
 					# I might add extras theres.
 					"Duration_s": 0.3, # have to up to 0.2 lower than 0.2 will fail in transmitting  0.3 is recommended for stable audio transmitting
 				},
-				"Frequency_int": 2, # tring 2 call is enough
+				"Frequency_int": 2, # tring 2 call is enough increase this if shit connections that adapter's sensitivity id rather weaker than its own bluetooth le
 			},
 			
 			"DELAY": { # Please ignore these part 
