@@ -131,6 +131,8 @@ import json
 
 colorama_init(autoreset=True)
 
+# I might need to change the default config_path to a customizable sections because on some certain os distros does not have the proper configuration 
+
 # ------------------------------
 # Logging Setup
 # ------------------------------
