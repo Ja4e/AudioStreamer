@@ -3,6 +3,8 @@ Program for streaming ASHA hearing aids
 
 Supports other ASHA devices for volume control with provided bash script (volume.sh)
 
+I disliked how G.722 was made it was made within bluetooth le. It made the connection so spotty has heck. 
+
 I would recommend using this:
 python connect2.py -d -r -rof
 
