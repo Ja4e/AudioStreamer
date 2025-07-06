@@ -3,7 +3,7 @@ Program for streaming ASHA hearing aids
 
 Supports other ASHA devices for volume control with provided bash script (volume.sh)
 
-I disliked how G.722 was made it was made within bluetooth le. It made the connection so spotty has heck. 
+I disliked how G.722 was made it was made within bluetooth le. It made the connection so spotty as heck. 
 
 I would recommend using this:
 python connect2.py -d -r -rof
@@ -23,7 +23,7 @@ Try connecting a single device and see if the quality improves or restart this p
 
 PLEASE DO GO https://github.com/thewierdnut/asha_pipewire_sink.git documentations BEFORE USE
 
-Required by SIG documentations:
+### Required by SIG documentations:
 
 /etc/modprobe.d/bluetooth_asha.conf
 options bluetooth enable_ecred=1
@@ -89,3 +89,9 @@ please do configure them:
 
 
 README file need to be revamped for better readability
+
+Connection timeout needed to be revamped
+
+Also need a strong algorithm poor connection to drop and reconnect
+
+need a logging system to report unusual issues
