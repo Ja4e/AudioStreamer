@@ -131,8 +131,6 @@ import json
 
 colorama_init(autoreset=True)
 
-# I might need to change the default config_path to a customizable sections because on some certain os distros does not have the proper configuration 
-
 # ------------------------------
 # Logging Setup
 # ------------------------------
@@ -171,6 +169,7 @@ def load_config(config_path: str) -> dict:
 			},
 			
 			"GATT": {
+				"Allow": True,
 				"Volume": {
 					"ID": "00e4ca9e-ab14-41e4-8823-f9e70c7e91df", # Change it if needed
 					"Value": "0xff",
@@ -181,7 +180,7 @@ def load_config(config_path: str) -> dict:
 					# I might add extras theres.
 					"Duration_s": 0.3, # have to up to 0.2 lower than 0.2 will fail in transmitting  0.3 is recommended for stable audio transmitting
 				},
-				"Frequency_int": 2, # tring 2 call is enough increase this if shit connections that adapter's sensitivity id rather weaker than its own bluetooth le
+				"Frequency_int": 1, # tring 2 call is enough
 			},
 			
 			"DELAY": { # Please ignore these part 
@@ -245,6 +244,7 @@ GATT
 """
 
 GATT_ATTRIBUTE: str = config["GATT"]["Volume"]["ID"] or "00e4ca9e-ab14-41e4-8823-f9e70c7e91df"
+# GATT_ATTRIBUTE: str = "00e4ca9e-ab14-41e4-8823-f9e70c7e91df"
 VOLUME_VALUE: str = config["GATT"]["Volume"]["Value"] or "0xff"
 
 """
@@ -263,11 +263,21 @@ EXECUTABLE: str = os.path.join(BUILD_DIR, "asha_pipewire_sink")
 """
 Randomized timing settings can be fixed
 """
+
+#DELAY_CFG = config["DELAY"]
+#RETRY_DELAY = float(DELAY_CFG.get("RETRY", 0.5))
+#DEFAULT_RETRY_INTERVAL = float(DELAY_CFG.get("DEFAULT_RETRY", 0.0))
+#MAX_TIMEOUT = float(DELAY_CFG.get("MAX_TIMEOUT", 600.0))
+#Timeout_qs = float(DELAY_CFG.get("Timeout_qs", 120.0))
+
 # Randomized timing settings
 RETRY_DELAY: float = random.uniform(0.4, 1.0)
+
+#DELAY_CFG = config["DELAY"]
+
 DEFAULT_RETRY_INTERVAL: float = 0.0
 MAX_TIMEOUT: float = random.uniform(600, 1200)
-Timeout_qs: float = random.uniform(100000, 120000)
+Timeout_qs: float = random.uniform(80000, 100000)
 
 # Blacklist devices to avoid
 BLACKLIST: list = config.get("Blacklist", []) # I may want to set a boolean switch to filter all devices that has "DFU" names because thats not the devices you wanted to connect
@@ -881,33 +891,34 @@ class BluetoothAshaManager:
 							logger.info("Detected audio state change")
 							with connected_list_lock:
 								for mac, name in global_connected_list:
-									logger.info(f"Triggering GATT operations on {name}...")
-									#self.perform_gatt_operations(mac, name)
-									# for _ in range(3): # once is enough but this is made for precaution 
-									# # for _ in range(2):
-										# time.sleep(0.2) # uhm might change that but ok just incase, it has to be 0
-										# self.perform_gatt_operations(mac, name)
-									
-									mode: str = config["GATT"]["Trigger"] or "increment"
-									duration: int = mode["Duration_s"] or 0.2
-									if duration < 0.2:
-										logger.warn("first trigger will fail")
-									
-									frequency: int = config["GATT"]["Frequency_int"] or 3
-									
-									if mode == "burst":
-										for _ in range(frequency):
-											time.sleep(duration)
-											self.perform_gatt_operations(mac, name)
-									elif mode == "increment":
-										for i in range(1, frequency+1):
-											delay = duration * i
-											time.sleep(delay)
-											self.perform_gatt_operations(mac, name)
-									else:  # periodic
-										for _ in range(frequency):
-											time.sleep(duration)
-											self.perform_gatt_operations(mac, name)
+									if config["GATT"]["Allow"] == True:
+										logger.info(f"Triggering GATT operations on {name}...")
+										#self.perform_gatt_operations(mac, name)
+										# for _ in range(3): # once is enough but this is made for precaution 
+										# # for _ in range(2):
+											# time.sleep(0.2) # uhm might change that but ok just incase, it has to be 0
+											# self.perform_gatt_operations(mac, name)
+										
+										mode: str = config["GATT"]["Trigger"] or "increment"
+										duration: int = mode["Duration_s"] or 0.2
+										if duration < 0.2:
+											logger.warn("first trigger will fail")
+										
+										frequency: int = config["GATT"]["Frequency_int"] or 3
+										
+										if mode == "burst":
+											for _ in range(frequency):
+												time.sleep(duration)
+												self.perform_gatt_operations(mac, name)
+										elif mode == "increment":
+											for i in range(1, frequency+1):
+												delay = duration * i
+												time.sleep(delay)
+												self.perform_gatt_operations(mac, name)
+										else:  # periodic
+											for _ in range(frequency):
+												time.sleep(duration)
+												self.perform_gatt_operations(mac, name)
 
 			except Exception as e:
 				if not shutdown_evt.is_set():
