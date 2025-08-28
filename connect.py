@@ -883,6 +883,8 @@ class BluetoothAshaManager:
 						]):
 							logger.debug(f"Counterdown stopped {current_time}")
 							self.timer = False
+							current_time = 0
+							
 							
 						if ("on_change_state" in decoded and
 								("new: PAUSED" in decoded or "new: STREAMING" in decoded) and
