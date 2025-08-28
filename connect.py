@@ -870,7 +870,7 @@ class BluetoothAshaManager:
 							logger.warning("ASHA connection dropped")
 							self.timer = False
 							self.gett_triggered = False
-							
+							current_time = 0
 							if self.args.reconnect:
 								with connected_list_lock:
 									global_connected_list.clear()
@@ -889,6 +889,7 @@ class BluetoothAshaManager:
 								not self.gatt_triggered and not self.args.clean_state):
 							self.gatt_triggered = True
 							logger.info("Detected audio state change")
+							current_time = 0
 							with connected_list_lock:
 								for mac, name in global_connected_list:
 									if config["GATT"]["Allow"] == True:
