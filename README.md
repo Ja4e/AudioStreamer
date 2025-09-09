@@ -5,6 +5,8 @@ Supports other ASHA devices for volume control with provided bash script (volume
 
 I disliked how G.722 was made it was made within bluetooth le. It made the connection so spotty as heck. 
 
+This Bluetooth has some TCP-like mechanism different from what the iphone has, I am pretty sure there is some undocumented features that bluetooth features
+
 I would recommend using this:
 python connect2.py -d -r -rof
 
