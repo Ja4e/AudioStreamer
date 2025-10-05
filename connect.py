@@ -162,6 +162,7 @@ def load_config(config_path: str) -> dict:
 					"Duration_s": 0.3, # have to up to 0.2 lower than 0.2 will fail in transmitting  0.3 is recommended for stable audio transmitting
 				},
 				"Frequency_int": 1, # tring 2 call is enough
+				"Detect_loss": False, # Will add more options to fine-tune 
 			},
 			
 			"DELAY": { # Please ignore these part 
@@ -674,6 +675,8 @@ class BluetoothAshaManager:
 					logger.info(f"{Fore.GREEN}Connected to {name} ({mac})!{Style.RESET_ALL}")
 					run_trust_background(mac)
 					disable_pairable_background()
+					run_command("bluetoothctl discoverable off")
+					run_command("bluetoothctl scan off")
 		else:
 			if self.args.reset_on_failure:
 				logger.warning("Failed to connect to %s — reset-on-failure triggered", mac)
@@ -736,8 +739,8 @@ class BluetoothAshaManager:
 		except Exception as e:
 			logger.error(f"ASHA startup failed: {e}")
 			os.close(master_fd)
-			raise
-
+			raise	
+	
 	def stream_asha_output(self, asha_handle: Tuple[int, int]) -> None:
 		"""
 		Reads the ASHA output and watches for connection drops or GATT triggers.
@@ -745,6 +748,96 @@ class BluetoothAshaManager:
 		child_pid, master_fd = asha_handle
 		buffer = b""
 		last_stats: Optional[dict] = None
+		
+		buffer_x, buffer_y, buffer_z = [], [], []
+		
+		def safe_append(buf, val):
+			"""Always keeps buffer as a list even if corrupted."""
+			if not isinstance(buf, list):
+				buf = [buf] if isinstance(buf, (int, float)) else []
+			buf.append(val)
+			return buf
+
+		def clr_history(buf, max_len=100):
+			if not isinstance(buf, list):
+				# auto-heal corrupted buffer
+				buf = [buf] if isinstance(buf, (int, float)) else []
+				return False
+			if len(buf) > max_len:
+				buf[:] = buf[-max_len:]
+				return True
+			return False
+
+		def mean_std(buf):
+			if not isinstance(buf, (list, tuple)):
+				buf = [buf]
+			n = len(buf)
+			if n == 0:
+				return 0.0, 0.0
+			mean_val = sum(buf) / n
+			total = 0.0
+			for v in buf:
+				diff = v - mean_val
+				total += diff * diff
+			var = total / n
+			# manual sqrt (Newton method)
+			x = var
+			if x <= 0.0:
+				return mean_val, 0.0
+			approx = x
+			for _ in range(8):
+				approx = 0.5 * (approx + x / approx)
+			std = approx
+			return mean_val, std
+
+		def detect_loss(x, y, z, max_history=50, tolerance=10.0, min_samples=10, drift_limit=0.10):
+			if not isinstance(x, (list, tuple)):
+				x = [x]
+			if not isinstance(y, (list, tuple)):
+				y = [y]
+			if not isinstance(z, (list, tuple)):
+				z = [z]
+
+			clr_history(x, max_history)
+			clr_history(y, max_history)
+			clr_history(z, max_history)
+
+			if len(x) < min_samples or len(y) < min_samples or len(z) < min_samples:
+				return False
+
+			mean_x, std_x = mean_std(x)
+			mean_y, std_y = mean_std(y)
+			mean_z, std_z = mean_std(z)
+
+			last_vals = [x[-1], y[-1], z[-1]]
+			means = [mean_x, mean_y, mean_z]
+			stds = [std_x, std_y, std_z]
+
+			z_scores = []
+			for v, m, s in zip(last_vals, means, stds):
+				diff = abs(v - m)
+				z = 0.0 if s < 1e-6 else diff / s
+				z_scores.append(z)
+
+			def rate(buf):
+				if not isinstance(buf, (list, tuple)) or len(buf) < 2:
+					return 0.0
+				return abs(buf[-1] - buf[-2])
+
+			dx = rate(x)
+			dy = rate(y)
+			dz = rate(z)
+			avg_rate = (dx + dy + dz) / 3.0
+
+			# Ignore silent drift (no movement)
+			if avg_rate < drift_limit:
+				return False
+
+			# Spike or sudden deviation = likely packet loss
+			if all(zv > tolerance for zv in z_scores):
+				return True
+
+			return False
 
 		# Updated regex to optionally capture Rssi: <val>, <val>
 		ring_regex = re.compile(
@@ -752,7 +845,7 @@ class BluetoothAshaManager:
 			r"Adapter Dropped:\s*(\d+)\s+Total:\s*(\d+)\s+Silence:\s*(\d+)\s+Total:\s*(\d+)"
 			r"(?:\s+Rssi:\s*(\d+),\s*(\d+))?"
 		)
-
+		
 		current_time = 0
 		
 		while not shutdown_evt.is_set():
@@ -769,7 +862,6 @@ class BluetoothAshaManager:
 						if "Ring Occupancy:" in decoded:
 							match = ring_regex.search(decoded)
 							if match:
-								# Fields for core stats
 								fields = [
 									"Ring Occupancy",
 									"High",
@@ -782,10 +874,8 @@ class BluetoothAshaManager:
 								]
 								values = match.groups()
 
-								# Main numeric values
 								current_stats = {field: int(val) for field, val in zip(fields, values[:8])}
 
-								# Optional Rssi values
 								rssi_str = ""
 								if values[8] is not None and values[9] is not None:
 									rssi_str = f" Rssi: {values[8]}, {values[9]}"
@@ -816,6 +906,20 @@ class BluetoothAshaManager:
 
 								logger.debug(f"{Fore.BLUE}[ASHA]{Style.RESET_ALL} {highlighted_line}")
 								last_stats = current_stats
+								
+								if config["GATT"]["Detect_loss"]:
+									buffer_x = safe_append(buffer_x, current_stats['Ring Dropped'])
+									buffer_y = safe_append(buffer_y, current_stats['Adapter Dropped'])
+									buffer_z = safe_append(buffer_z, current_stats['Silence'])
+
+									if detect_loss(buffer_x, buffer_y, buffer_z):
+										logger.warning("ASHA packet loss detected (auto reconnect)")
+										if self.args.reconnect:
+											with connected_list_lock:
+												global_connected_list.clear()
+											reconnect_evt.set()
+											asha_restart_evt.set()
+								
 							else:
 								logger.debug(f"{Fore.BLUE}[ASHA]{Style.RESET_ALL} {decoded}")
 						else:
@@ -848,7 +952,7 @@ class BluetoothAshaManager:
 							self.timer = True
 						
 						if current_time >= Timeout_qs:
-							logger.warning("ASHA connection dropped")
+							logger.warning("ASHA connection dropped (timeout)")
 							self.timer = False
 							self.gett_triggered = False
 							current_time = 0
@@ -862,7 +966,7 @@ class BluetoothAshaManager:
 						if any(phrase in decoded for phrase in [
 							"Properties read callback"
 						]):
-							logger.debug(f"Counterdown stopped {current_time}")
+							logger.debug(f"Countdown stopped {current_time}")
 							self.timer = False
 							current_time = 0
 							
@@ -877,17 +981,10 @@ class BluetoothAshaManager:
 								for mac, name in global_connected_list:
 									if config["GATT"]["Allow"] == True:
 										logger.info(f"Triggering GATT operations on {name}...")
-										#self.perform_gatt_operations(mac, name)
-										# for _ in range(3): # once is enough but this is made for precaution 
-										# # for _ in range(2):
-											# time.sleep(0.2) # uhm might change that but ok just incase, it has to be 0
-											# self.perform_gatt_operations(mac, name)
-										
 										mode: str = config["GATT"]["Trigger"] or "increment"
 										duration: int = mode["Duration_s"] or 0.2
 										if duration < 0.2:
-											logger.warn("first trigger will fail")
-										
+											logger.warn("first trigger may fail")
 										frequency: int = config["GATT"]["Frequency_int"] or 3
 										
 										if mode == "burst":
@@ -895,11 +992,11 @@ class BluetoothAshaManager:
 												time.sleep(duration)
 												self.perform_gatt_operations(mac, name)
 										elif mode == "increment":
-											for i in range(1, frequency+1):
+											for i in range(1, frequency + 1):
 												delay = duration * i
 												time.sleep(delay)
 												self.perform_gatt_operations(mac, name)
-										else:  # periodic
+										else:
 											for _ in range(frequency):
 												time.sleep(duration)
 												self.perform_gatt_operations(mac, name)
@@ -907,7 +1004,7 @@ class BluetoothAshaManager:
 			except Exception as e:
 				if not shutdown_evt.is_set():
 					logger.error(f"ASHA stream error: {e}")
-					reset_evt.set()  # Trigger reset on critical ASHA failure May needed
+					reset_evt.set()
 				break
 
 
