@@ -35,7 +35,7 @@ args = parser.parse_args()
 
 CHAN1 = args.chan1
 CHAN2 = args.chan2
-LAT1 = float(os.environ.get('ASHA_LAT', '99'))
+LAT1 = float(os.environ.get('ASHA_LAT', '120')) # adjust to any latency you wanted, mine is  MEDEL G722 audiostream adapter paired up with Phonak hearing aid so i have to put 120ms delay for the audio stream adapter to stay sync
 LAT2 = float(os.environ.get('BT_LAT', '0'))
 
 # === GLOBALS ===
