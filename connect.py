@@ -216,7 +216,7 @@ DEVICES
 """
 
 # Extract filters and options
-PRIMARY_FILTER: str = config["Devices"]["Primary"]["Name"] or "JZ's Hearing Device" # Fallback mechanism
+PRIMARY_FILTER: str = config["Devices"]["Primary"]["Name"] or "" # Fallback mechanism
 SECONDARY_FILTER: str = config["Devices"]["Secondary"]["Name"] or "AudioStream Adapter" # Fallback mechanism
 if not PRIMARY_FILTER or not SECONDARY_FILTER:
     raise RuntimeError("Error: No device name either one of them must be specified in config.")
