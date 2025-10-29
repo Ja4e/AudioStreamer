@@ -23,6 +23,9 @@ If the audio is choppy, delayed, or sounds like it is shifting from ear to ear, 
 Try connecting a single device and see if the quality improves or restart this program it usually fixes for me.
 
 
+-c to remove that GATT trigger to FF i may want to let user to choose and override that set under config, you can use it to control the volume rather controlling them through the desktop. Using that volume control on your desktop can cause lower audio quality you not going to like it
+
+
 PLEASE DO GO https://github.com/thewierdnut/asha_pipewire_sink.git documentations BEFORE USE
 
 ### Required by SIG documentations:
