@@ -162,7 +162,7 @@ def load_config(config_path: str) -> dict:
 					"Duration_s": 0.3, # have to up to 0.2 lower than 0.2 will fail in transmitting  0.3 is recommended for stable audio transmitting
 				},
 				"Frequency_int": 1, # tring 2 call is enough
-				"Detect_loss": False, # Will add more options to fine-tune 
+				"Detect_loss": False # Will add more options to fine-tune 
 			},
 			
 			"DELAY": { # Please ignore these part 
@@ -175,7 +175,7 @@ def load_config(config_path: str) -> dict:
 			"Blacklist": [
 				"AudioStream Adapter DFU",
 				# Add anything you needed
-			],
+			]
 		}
 
 	def deep_merge(default: dict, override: dict) -> None:
@@ -216,7 +216,7 @@ DEVICES
 """
 
 # Extract filters and options
-PRIMARY_FILTER: str = config["Devices"]["Primary"]["Name"] or "" # Fallback mechanism
+PRIMARY_FILTER: str = config["Devices"]["Primary"]["Name"] or "JZ's Hearing Device" # Fallback mechanism
 SECONDARY_FILTER: str = config["Devices"]["Secondary"]["Name"] or "AudioStream Adapter" # Fallback mechanism
 if not PRIMARY_FILTER or not SECONDARY_FILTER:
     raise RuntimeError("Error: No device name either one of them must be specified in config.")
@@ -227,7 +227,7 @@ GATT
 
 GATT_ATTRIBUTE: str = config["GATT"]["Volume"]["ID"] or "00e4ca9e-ab14-41e4-8823-f9e70c7e91df"
 # GATT_ATTRIBUTE: str = "00e4ca9e-ab14-41e4-8823-f9e70c7e91df"
-VOLUME_VALUE: str = config["GATT"]["Volume"]["Value"] or "0xff"
+VOLUME_VALUE: str = os.getenv("LND") or config["GATT"]["Volume"]["Value"]
 
 """
 Global
@@ -254,6 +254,7 @@ Randomized timing settings can be fixed
 
 # Randomized timing settings
 RETRY_DELAY: float = random.uniform(0.4, 1.0)
+
 
 #DELAY_CFG = config["DELAY"]
 
@@ -623,6 +624,7 @@ class BluetoothAshaManager:
 				)
 
 				if output and any(s in output for s in ["Connection successful", "already connected"]):
+					time.sleep(1)
 					info = await asyncio.to_thread(
 						run_command,
 						f"bluetoothctl info {mac_address}",
@@ -758,7 +760,7 @@ class BluetoothAshaManager:
 			buf.append(val)
 			return buf
 
-		def clr_history(buf, max_len=100):
+		def clr_history(buf, max_len=50):
 			if not isinstance(buf, list):
 				# auto-heal corrupted buffer
 				buf = [buf] if isinstance(buf, (int, float)) else []
@@ -1212,6 +1214,8 @@ def main() -> None:
 						help='Disable Bluetooth LE advertising')
 	parser.add_argument('-rof','--reset-on-failure', action='store_true', 
 						help='Auto-reset adapter on ASHA connect failure')
+	parser.add_argument('-l', '--loudness', action='store_true',
+						help="Override cnfigured GATT Trigger It ranged from 0x80 to 0xFF.\nFF may not work on some devices try 0xF0 instead.\nDo allow env can be set as LND= appened into the command line for ease of access")
 	args = parser.parse_args()
 
 	manager = BluetoothAshaManager(args)
