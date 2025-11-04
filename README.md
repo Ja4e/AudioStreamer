@@ -3,7 +3,7 @@ Program for streaming ASHA hearing aids
 
 Supports other ASHA devices for volume control with provided bash script (volume.sh)
 
-I disliked how G.722 was made it was made within bluetooth le. It made the connection so spotty as heck. 
+I disliked how G.722 was made it was made within bluetooth le. It made the connection so spotty as heck or the bluez developers are just being lazy as heck
 
 This Bluetooth has some TCP-like mechanism different from what the iphone has, I am pretty sure there is some undocumented features that bluetooth features
 
