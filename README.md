@@ -26,6 +26,8 @@ Try connecting a single device and see if the quality improves or restart this p
 -c to remove that GATT trigger to FF i may want to let user to choose and override that set under config, you can use it to control the volume rather controlling them through the desktop. Using that volume control on your desktop can cause lower audio quality you not going to like it
 it ranges from 80 to FF
 
+Env overrides the -c
+
 
 PLEASE DO GO https://github.com/thewierdnut/asha_pipewire_sink.git documentations BEFORE USE
 
