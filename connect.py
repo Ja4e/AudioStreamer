@@ -226,9 +226,8 @@ GATT
 """
 
 GATT_ATTRIBUTE: str = config["GATT"]["Volume"]["ID"] or "00e4ca9e-ab14-41e4-8823-f9e70c7e91df"
-# GATT_ATTRIBUTE: str = "00e4ca9e-ab14-41e4-8823-f9e70c7e91df"
-VOLUME_VALUE: str = os.getenv("LND") or config["GATT"]["Volume"]["Value"]
 
+# Global
 """
 Global
 """
@@ -413,6 +412,21 @@ class BluetoothAshaManager:
 		self.gatt_triggered: bool = False  # Instance flag for GATT trigger
 		self.timer: bool = False # Introduced Timer to fix the stupid bugs
 		self.ad_registered: bool = False   # Track advertisement registration status
+		
+		# Set volume value based on arguments and environment variable
+		if self.args.loudness:
+			# If --loudness is used, prioritize environment variable
+			env_volume = os.getenv("LND")
+			if env_volume:
+				self.volume_value = env_volume
+				logger.info(f"{Fore.YELLOW}Using environment variable LND={env_volume} for volume{Style.RESET_ALL}")
+			else:
+				self.volume_value = config["GATT"]["Volume"]["Value"]
+				logger.info(f"{Fore.YELLOW}Using configured volume value: {self.volume_value}{Style.RESET_ALL}")
+		else:
+			# Normal operation: use config value
+			self.volume_value = config["GATT"]["Volume"]["Value"]
+			logger.info(f"Using configured volume value: {self.volume_value}")
 
 	# Bluetooth Initialization
 
@@ -1015,7 +1029,7 @@ class BluetoothAshaManager:
 		Perform GATT operations by connecting to the device, selecting the attribute,
 		and writing the volume.
 		"""
-		logger.info(f"Starting GATT operations for {device_name}")
+		logger.info(f"Starting GATT operations for {device_name} with volume value: {self.volume_value}")
 		try:
 			process = subprocess.Popen(
 				["bluetoothctl"],
@@ -1026,12 +1040,12 @@ class BluetoothAshaManager:
 			)
 			commands = f"""connect {mac_address}
 gatt.select-attribute {GATT_ATTRIBUTE}
-gatt.write {VOLUME_VALUE}
+gatt.write {self.volume_value}
 exit
 """
 			stdout, stderr = process.communicate(commands)
 			if process.returncode == 0:
-				logger.info(f"{Fore.GREEN}GATT operations completed{Style.RESET_ALL}")
+				logger.info(f"{Fore.GREEN}GATT operations completed with volume {self.volume_value}{Style.RESET_ALL}")
 				return True
 			else:
 				logger.error(f"{Fore.RED}GATT operations failed: {stderr.strip()}{Style.RESET_ALL}")
@@ -1215,7 +1229,7 @@ def main() -> None:
 	parser.add_argument('-rof','--reset-on-failure', action='store_true', 
 						help='Auto-reset adapter on ASHA connect failure')
 	parser.add_argument('-l', '--loudness', action='store_true',
-						help="Override cnfigured GATT Trigger It ranged from 0x80 to 0xFF.\nFF may not work on some devices try 0xF0 instead.\nDo allow env can be set as LND= appened into the command line for ease of access")
+						help="Override configured GATT Trigger. It ranged from 0x80 to 0xFF.\nFF may not work on some devices try 0xF0 instead.\nDo allow env can be set as LND= appended into the command line for ease of access")
 	args = parser.parse_args()
 
 	manager = BluetoothAshaManager(args)
